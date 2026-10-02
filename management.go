@@ -9,32 +9,73 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// The management panel.
+// The panel's HTTP surface.
 //
-// CPA mounts plugin resources under /v0/resource/plugins/<id>/ and plugin
-// management routes under /v0/management/<id>. Resource routes are
-// browser-navigable and not management-authenticated, which is what makes them
-// suitable for the HTML page; the status JSON lives there too so the page can
-// read it without a second auth context.
+// One handler covers the page and the JSON it talks to, because they share a prefix
+// and the same (unauthenticated) resource context; splitting them would add
+// indirection without adding safety. The page is served from
+// /v0/resource/plugins/doubao, which CPA exposes without the management key, so the
+// panel works in the host's iframe without the user pasting a key anywhere.
 
-// managementRegistration answers management.register.
+// managementRegistration declares the panel's routes.
+//
+// Two route kinds, and the distinction matters:
+//
+//	Resources  GET only, served without the management key. The page itself lives
+//	           here so it renders inside the host's iframe without the user
+//	           pasting a key anywhere.
+//	Routes     full method support, behind the management middleware. Everything
+//	           the page writes goes here.
+//
+// A write on a resource path silently does nothing: ServeResourceHTTP returns
+// false for any method but GET, and the request then 404s. That is why the
+// settings endpoint is registered under Routes.
 func managementRegistration() managementRegistrationResponse {
 	return managementRegistrationResponse{
 		Resources: []pluginapi.ResourceRoute{
 			{
-				Path:        "/panel",
+				// The path must not be "/": CPA normalises a resource path with
+				// strings.TrimRight(path, "/") and rejects the result when it
+				// becomes empty, so a root resource is logged as
+				// "declared invalid resource route /" and dropped — the menu
+				// entry then never appears.
+				Path:        "panel",
 				Menu:        "豆包 / Dola",
-				Description: "查看上游账号状态与可用模型，并查看授权步骤。",
+				Description: "上游状态、模型列表与插件设置，全部集中在这一页。",
+			},
+		},
+		Routes: []pluginapi.ManagementRoute{
+			{
+				Method:      http.MethodGet,
+				Path:        "/doubao/status",
+				Description: "插件状态 JSON：上游、模型与当前设置。",
 			},
 			{
-				Path:        "/status",
-				Description: "插件状态 JSON：上游、模型与授权情况。",
+				Method:      http.MethodGet,
+				Path:        "/doubao/settings",
+				Description: "当前设置 JSON。",
+			},
+			{
+				Method:      http.MethodPost,
+				Path:        "/doubao/settings",
+				Description: "更新设置（默认上游、模型可见范围、超时与轮询、日志）。",
+			},
+			{
+				// The page is also mounted on the management path so a browser can
+				// reach it directly, and so the in-page writes share one prefix
+				// with the page's own origin.
+				Method:      http.MethodGet,
+				Path:        "/doubao/panel",
+				Description: "豆包 / Dola 控制台页面。",
 			},
 		},
 	}
 }
 
 // handleManagement answers management.handle.
+//
+// The request carries the path CPA already stripped of the plugin prefix, so the
+// switch below matches on the tail only.
 func handleManagement(request []byte) ([]byte, error) {
 	var req pluginapi.ManagementRequest
 	if len(request) > 0 {
@@ -42,167 +83,229 @@ func handleManagement(request []byte) ([]byte, error) {
 			return nil, errUnmarshal
 		}
 	}
-
-	path := strings.TrimSuffix(req.Path, "/")
-	switch {
-	case strings.HasSuffix(path, "/status"):
-		return okEnvelope(pluginapi.ManagementResponse{
-			StatusCode: http.StatusOK,
-			Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
-			Body:       statusJSON(),
-		})
-	default:
-		return okEnvelope(pluginapi.ManagementResponse{
-			StatusCode: http.StatusOK,
-			Headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
-			Body:       []byte(panelHTML()),
-		})
-	}
+	return okEnvelope(handlePanelRoute(req))
 }
 
-// statusSnapshot is the plugin status document.
-type statusSnapshot struct {
-	Plugin       string           `json:"plugin"`
-	Version      string           `json:"version"`
-	DefaultRealm string           `json:"default_realm"`
-	Realms       []realmStatus    `json:"realms"`
-	Models       []map[string]any `json:"models"`
-	Settings     map[string]any   `json:"settings"`
-}
-
-type realmStatus struct {
-	Realm       string `json:"realm"`
-	DisplayName string `json:"display_name"`
-	Host        string `json:"host"`
-	AID         string `json:"aid"`
-	Region      string `json:"region"`
-	BotID       string `json:"bot_id"`
-	ModelCount  int    `json:"model_count"`
-}
-
-func statusJSON() []byte {
-	settings := state.settings.get()
-	out := statusSnapshot{
-		Plugin:       pluginName,
-		Version:      pluginVersion,
-		DefaultRealm: string(settings.RealmDefault),
-		Settings: map[string]any{
-			"expose_models":           settings.exposesModels(),
-			"request_timeout_seconds": settings.RequestTimeoutSeconds,
-			"reply_poll_seconds":      settings.ReplyPollSeconds,
-			"reply_poll_interval_ms":  settings.ReplyPollIntervalMS,
-			"debug":                   settings.Debug,
-		},
-		Models: modelDisplayList(),
-	}
-	for _, r := range allRealms {
-		p := profileFor(r)
-		out.Realms = append(out.Realms, realmStatus{
-			Realm:       string(r),
-			DisplayName: p.DisplayName,
-			Host:        p.Host,
-			AID:         p.AID,
-			Region:      p.Region,
-			BotID:       defaultBotIDFor(r),
-			ModelCount:  len(catalogueFor(r)),
-		})
-	}
-	raw, _ := json.MarshalIndent(out, "", "  ")
-	return raw
-}
-
-// panelHTML renders the plugin's page.
+// handlePanelRoute routes one panel request.
 //
-// It is deliberately self-contained: no external requests, no framework. A
-// plugin page that depends on a CDN fails in exactly the environments this proxy
-// is used in.
-func panelHTML() string {
-	settings := state.settings.get()
-	var realmRows strings.Builder
-	for _, r := range allRealms {
-		p := profileFor(r)
-		mark := ""
-		if r == settings.RealmDefault {
-			mark = ` <span class="tag">默认</span>`
+// The paths are the tails CPA resolves after stripping the plugin prefix, so the
+// resource page and the management API both arrive here and are told apart by
+// their tail alone.
+func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementResponse {
+	path := normalisePanelPath(req.Path)
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
+
+	switch path {
+	case "", "/", "/panel", "/home":
+		return htmlResponse(renderMainPage())
+
+	case "/status":
+		return jsonResponse(statusJSON())
+
+	case "/settings":
+		if method == http.MethodPost || method == http.MethodPut {
+			return applySettingsPost(req.Body)
 		}
-		realmRows.WriteString(fmt.Sprintf(
-			`<tr><td><code>%s</code></td><td>%s%s</td><td><code>%s</code></td><td>%s</td><td>%s</td></tr>`,
-			r, p.DisplayName, mark, p.Host, p.AID, p.Region,
-		))
+		return jsonResponse(map[string]any{"settings": settingsJSON(state.settings.get())})
+
+	default:
+		// Unknown paths fall back to the page so a stale bookmark still lands
+		// somewhere useful rather than on a bare 404.
+		return htmlResponse(renderMainPage())
 	}
-
-	var modelRows strings.Builder
-	for _, m := range modelDisplayList() {
-		modelRows.WriteString(fmt.Sprintf(
-			`<tr><td><code>%s</code></td><td>%s</td><td>%s</td></tr>`,
-			htmlEscape(fmt.Sprint(m["id"])),
-			htmlEscape(fmt.Sprint(m["owned_by"])),
-			htmlEscape(fmt.Sprint(m["description"])),
-		))
-	}
-
-	return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>豆包 / Dola 插件</title>
-<style>
-:root { color-scheme: light dark; }
-body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 24px; line-height: 1.6; }
-h1 { font-size: 20px; margin: 0 0 4px; }
-h2 { font-size: 15px; margin: 28px 0 8px; }
-.sub { opacity: .65; font-size: 13px; margin-bottom: 8px; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid rgba(128,128,128,.25); }
-th { font-weight: 600; opacity: .7; }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: rgba(64,128,255,.15); color: #4a7dff; }
-ol { padding-left: 20px; }
-ol li { margin: 4px 0; }
-.note { background: rgba(128,128,128,.1); border-radius: 8px; padding: 12px 16px; font-size: 13px; }
-</style>
-</head>
-<body>
-<h1>豆包 / Dola</h1>
-<div class="sub">版本 ` + pluginVersion + ` · 把豆包（国内版）与 Dola（国际版）反代为 OpenAI 兼容接口</div>
-
-<h2>上游</h2>
-<table>
-<tr><th>标识</th><th>名称</th><th>站点</th><th>aid</th><th>region</th></tr>
-` + realmRows.String() + `
-</table>
-
-<h2>可用模型</h2>
-<table>
-<tr><th>模型 ID</th><th>上游</th><th>说明</th></tr>
-` + modelRows.String() + `
-</table>
-
-<h2>如何授权</h2>
-<ol>
-<li>在浏览器中登录 <code>www.doubao.com</code>（国内版）或 <code>www.dola.com</code>（国际版）。</li>
-<li>按 F12 打开开发者工具，切到 <b>Network</b>，刷新页面。</li>
-<li>点击任意一条该站点的请求，在 <b>Request Headers</b> 中找到 <code>Cookie</code>。</li>
-<li>复制 Cookie 的完整值，粘贴到 CPA 的授权页面。</li>
-</ol>
-<div class="note">
-必须是<b>登录后</b>的完整 Cookie，其中要包含 <code>flow_cur_user_sec_id</code> 与 <code>sessionid</code>。
-缺少前者时网关会认为会话无效，聊天请求会失败。
-</div>
-
-<h2>调用方式</h2>
-<div class="note">
-模型名可加前缀指定上游：<code>doubao/default</code> 或 <code>dola/default</code>；
-不加前缀时使用默认上游（当前 <code>` + string(settings.RealmDefault) + `</code>）。
-</div>
-
-</body>
-</html>`
 }
 
-// htmlEscape escapes the few characters that matter inside element content.
-func htmlEscape(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
-	return r.Replace(s)
+// normalisePanelPath reduces a request path to the tail this handler switches on.
+//
+// The host hands over the resolved path, which may arrive under either prefix, so
+// both are stripped. Everything after them is what identifies the action.
+func normalisePanelPath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if i := strings.IndexByte(p, '?'); i >= 0 {
+		p = p[:i]
+	}
+	for _, prefix := range []string{
+		"/v0/resource/plugins/" + pluginName,
+		"/v0/management/" + pluginName,
+	} {
+		if strings.HasPrefix(p, prefix) {
+			p = strings.TrimPrefix(p, prefix)
+			break
+		}
+	}
+	if p == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return strings.TrimSuffix(p, "/")
+}
+
+func htmlResponse(body string) pluginapi.ManagementResponse {
+	return pluginapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+		Body:       []byte(body),
+	}
+}
+
+func jsonResponse(v any) pluginapi.ManagementResponse {
+	raw, errMarshal := json.MarshalIndent(v, "", "  ")
+	if errMarshal != nil {
+		raw = []byte(`{"error":"marshal failed"}`)
+	}
+	return pluginapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Body:       raw,
+	}
+}
+
+// settingsJSON renders the settings in the shape the page's script expects.
+func settingsJSON(s pluginSettings) map[string]any {
+	return map[string]any{
+		"realm_default":           string(s.RealmDefault),
+		"expose_models":           s.exposesModels(),
+		"request_timeout_seconds": s.RequestTimeoutSeconds,
+		"reply_poll_seconds":      s.ReplyPollSeconds,
+		"media_poll_seconds":      s.MediaPollSeconds,
+		"reply_poll_interval_ms":  s.ReplyPollIntervalMS,
+		"debug":                   s.Debug,
+	}
+}
+
+// applySettingsPost applies one settings patch.
+//
+// The body is a partial object: the page sends only the field that changed. The
+// result is returned in full so the caller can repaint every control that depends
+// on a setting, rather than guessing which ones moved.
+func applySettingsPost(body []byte) pluginapi.ManagementResponse {
+	var patch map[string]json.RawMessage
+	if len(body) > 0 {
+		if errUnmarshal := json.Unmarshal(body, &patch); errUnmarshal != nil {
+			return errorJSON(http.StatusBadRequest, "无法解析设置内容："+errUnmarshal.Error())
+		}
+	}
+
+	next := state.settings.get()
+	if errApply := applySettingsPatch(&next, patch); errApply != nil {
+		return errorJSON(http.StatusBadRequest, errApply.Error())
+	}
+
+	state.settings.set(next)
+
+	// Persist through the host so the change survives a restart. A failure here is
+	// reported rather than swallowed: the setting is live either way, but the user
+	// should know it will not stick.
+	persisted := true
+	var persistErr string
+	if errPersist := persistSettings(patch); errPersist != nil {
+		persisted = false
+		persistErr = errPersist.Error()
+	}
+
+	return jsonResponse(map[string]any{
+		"settings":  settingsJSON(next),
+		"persisted": persisted,
+		"error":     persistErr,
+	})
+}
+
+// applySettingsPatch folds a partial object into the settings.
+func applySettingsPatch(s *pluginSettings, patch map[string]json.RawMessage) error {
+	for key, raw := range patch {
+		switch key {
+		case "realm_default":
+			var v string
+			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
+				return fmt.Errorf("realm_default 格式错误")
+			}
+			r := normalizeRealm(v)
+			if r == "" {
+				return fmt.Errorf("未知上游 %q，可选 doubao 或 dola", v)
+			}
+			s.RealmDefault = r
+
+		case "expose_models":
+			var v bool
+			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
+				return fmt.Errorf("expose_models 格式错误")
+			}
+			s.ExposeModels = boolPtr(v)
+
+		case "debug":
+			var v bool
+			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
+				return fmt.Errorf("debug 格式错误")
+			}
+			s.Debug = v
+
+		case "request_timeout_seconds":
+			n, errNum := positiveInt(raw)
+			if errNum != nil {
+				return fmt.Errorf("request_timeout_seconds %w", errNum)
+			}
+			s.RequestTimeoutSeconds = n
+
+		case "reply_poll_seconds":
+			n, errNum := positiveInt(raw)
+			if errNum != nil {
+				return fmt.Errorf("reply_poll_seconds %w", errNum)
+			}
+			s.ReplyPollSeconds = n
+
+		case "media_poll_seconds":
+			n, errNum := positiveInt(raw)
+			if errNum != nil {
+				return fmt.Errorf("media_poll_seconds %w", errNum)
+			}
+			s.MediaPollSeconds = n
+
+		case "reply_poll_interval_ms":
+			n, errNum := positiveInt(raw)
+			if errNum != nil {
+				return fmt.Errorf("reply_poll_interval_ms %w", errNum)
+			}
+			s.ReplyPollIntervalMS = n
+
+		default:
+			// An unknown key is ignored rather than rejected: the page and the
+			// plugin can be deployed out of step, and refusing the whole patch
+			// would make a newer page unable to save anything against an older
+			// plugin.
+		}
+	}
+	return nil
+}
+
+// positiveInt decodes a positive integer, rejecting zero and negatives.
+func positiveInt(raw json.RawMessage) (int, error) {
+	var v int
+	if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
+		return 0, fmt.Errorf("必须是整数")
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("必须是正整数")
+	}
+	return v, nil
+}
+
+// errorJSON renders a failure the page can show verbatim.
+func errorJSON(status int, message string) pluginapi.ManagementResponse {
+	raw, _ := json.Marshal(map[string]any{"error": message})
+	return pluginapi.ManagementResponse{
+		StatusCode: status,
+		Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Body:       raw,
+	}
+}
+
+// persistSettings writes the panel's changes to the plugin's own state file.
+//
+// CPA owns config.yaml and the host offers no callback that rewrites it, so the
+// change is stored by the plugin. Only the keys the patch touched are recorded, so
+// a value the operator sets by hand in config.yaml keeps applying.
+func persistSettings(patch map[string]json.RawMessage) error {
+	return mergePanelState(patch)
 }

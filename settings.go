@@ -82,6 +82,11 @@ func (h *settingsHolder) decodeLifecycleConfig(configYAML string) error {
 	if next.RealmDefault == "" {
 		next.RealmDefault = realmDoubao
 	}
+
+	// Fold in anything changed from the panel. The overlay is applied after the
+	// YAML so a live change wins over the value captured at startup.
+	overlayPanelState(&next)
+
 	h.mu.Lock()
 	h.when = next
 	h.mu.Unlock()
@@ -134,6 +139,17 @@ func (h *settingsHolder) get() pluginSettings {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.when
+}
+
+// set replaces the live settings.
+//
+// It is called by the panel when a setting changes, so the new value takes effect
+// without waiting for a config reload — the file write and the live value would
+// otherwise disagree until the next restart.
+func (h *settingsHolder) set(next pluginSettings) {
+	h.mu.Lock()
+	h.when = next
+	h.mu.Unlock()
 }
 
 // pluginState is the process-wide state.

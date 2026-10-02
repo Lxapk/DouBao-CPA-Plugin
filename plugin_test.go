@@ -4,7 +4,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
+
+// pluginStateDir is overridable so tests can redirect the state file.
+var _ = 0
 
 // newTestCredentials builds a credential with generated device fields.
 func newTestCredentials(r realm, cookies string) *credentials {
@@ -519,5 +524,128 @@ func TestOAuthPollRejectsGarbageCookie(t *testing.T) {
 	result, err := probeCredential(creds.withDefaults())
 	if err == nil {
 		t.Fatalf("无效 Cookie 通过了校验（返回 %v）——任意乱填都能授权成功", result != nil)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Panel routing
+// ---------------------------------------------------------------------------
+
+// TestPanelRoutes pins the paths the host resolves and the fallback behaviour.
+func TestPanelRoutes(t *testing.T) {
+	// The host may hand over the full path or the tail; both must land.
+	for _, path := range []string{"/", "/panel", "/home", "/v0/resource/plugins/doubao", "/v0/resource/plugins/doubao/panel"} {
+		resp := handlePanelRoute(pluginapi.ManagementRequest{Method: "GET", Path: path})
+		if resp.StatusCode != 200 {
+			t.Errorf("GET %s -> %d", path, resp.StatusCode)
+		}
+		if ct := resp.Headers.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+			t.Errorf("GET %s Content-Type = %q", path, ct)
+		}
+	}
+
+	// An unknown path must not 404 the iframe.
+	resp := handlePanelRoute(pluginapi.ManagementRequest{Method: "GET", Path: "/does-not-exist"})
+	if resp.StatusCode != 200 || !strings.Contains(string(resp.Body), "<!doctype html>") {
+		t.Errorf("未知路径没有回退到页面: %d", resp.StatusCode)
+	}
+
+	// A query string must not defeat the match.
+	resp = handlePanelRoute(pluginapi.ManagementRequest{Method: "GET", Path: "/status?x=1"})
+	if ct := resp.Headers.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("/status?x=1 Content-Type = %q", ct)
+	}
+}
+
+// TestStatusDocumentIsValidJSON guards the machine-readable surface.
+func TestStatusDocumentIsValidJSON(t *testing.T) {
+	var out statusSnapshot
+	if err := json.Unmarshal(statusJSON(), &out); err != nil {
+		t.Fatalf("status 不是合法 JSON: %v", err)
+	}
+	if out.Plugin != pluginName || out.Version != pluginVersion {
+		t.Errorf("status 身份字段错误: %+v", out)
+	}
+	if len(out.Realms) != len(allRealms) {
+		t.Errorf("上游数量 = %d, 期望 %d", len(out.Realms), len(allRealms))
+	}
+	if len(out.Models) == 0 {
+		t.Error("模型列表为空")
+	}
+}
+
+// TestHTMLNeverInterpolatesUnescaped pins the escaping helper the pages depend on.
+func TestHTMLNeverInterpolatesUnescaped(t *testing.T) {
+	got := htmlEscape(`<script>alert("x")</script>&`)
+	if strings.Contains(got, "<script>") || strings.Contains(got, `"`) {
+		t.Errorf("未转义: %s", got)
+	}
+	if !strings.Contains(got, "&lt;script&gt;") {
+		t.Errorf("转义结果异常: %s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Settings persistence
+// ---------------------------------------------------------------------------
+
+// TestSettingsPersistAcrossReload pins the storage path.
+//
+// CPA owns config.yaml and exposes no callback that rewrites it, so a panel change
+// is stored by the plugin. Without this the setting would appear to save and then
+// revert on the next start.
+func TestSettingsPersistAcrossReload(t *testing.T) {
+	state.settings.set(defaultSettings())
+	defer state.settings.set(defaultSettings())
+
+	// Point the state file at a scratch directory for the duration of the test.
+	orig := pluginStateDir
+	dir := t.TempDir()
+	pluginStateDir = func() string { return dir }
+	defer func() { pluginStateDir = orig }()
+
+	// Save a change through the same path the panel uses.
+	body, _ := json.Marshal(map[string]any{"realm_default": "dola", "media_poll_seconds": 900})
+	resp := handlePanelRoute(pluginapi.ManagementRequest{Method: "POST", Path: "/settings", Body: body})
+	if resp.StatusCode != 200 {
+		t.Fatalf("保存失败: %d %s", resp.StatusCode, resp.Body)
+	}
+	var out struct {
+		Persisted bool `json:"persisted"`
+	}
+	json.Unmarshal(resp.Body, &out)
+	if !out.Persisted {
+		t.Fatalf("未持久化: %s", resp.Body)
+	}
+
+	// A fresh load from a config that does not mention these keys must pick the
+	// saved values back up.
+	next := defaultSettings()
+	overlayPanelState(&next)
+	if next.RealmDefault != realmDola {
+		t.Errorf("realm 未恢复: %q", next.RealmDefault)
+	}
+	if next.MediaPollSeconds != 900 {
+		t.Errorf("media_poll_seconds 未恢复: %d", next.MediaPollSeconds)
+	}
+
+	// An explicit config value must not be silently overwritten by a stale file
+	// for keys the overlay does not carry.
+	explicit := defaultSettings()
+	explicit.RequestTimeoutSeconds = 45
+	overlayPanelState(&explicit)
+	if explicit.RequestTimeoutSeconds != 45 {
+		t.Errorf("overlay 覆盖了未保存的字段: %d", explicit.RequestTimeoutSeconds)
+	}
+}
+
+// TestPanelStatePathIsOutsideConfigDir guards the "do not touch CPA's files" rule.
+func TestPanelStatePathIsOutsideConfigDir(t *testing.T) {
+	p := panelStatePath()
+	if !strings.HasSuffix(p, "settings.json") {
+		t.Errorf("状态文件路径异常: %s", p)
+	}
+	if strings.Contains(p, "config.yaml") {
+		t.Errorf("状态文件不得写入 CPA 的 config.yaml: %s", p)
 	}
 }
