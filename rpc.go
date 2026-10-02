@@ -29,7 +29,7 @@ const (
 	// as 0.1.0 and the panel showed a version that did not exist. The release
 	// script now rewrites this line before building, and a test pins it to
 	// registry.json so a mismatch fails the suite rather than shipping.
-	pluginVersion = "0.2.4"
+	pluginVersion = "0.2.5"
 
 	pluginAuthor = "Lxapk"
 	pluginRepo   = "https://github.com/Lxapk/doubao-cpa-plugin"

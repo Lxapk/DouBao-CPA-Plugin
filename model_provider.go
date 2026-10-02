@@ -128,7 +128,18 @@ func catalogueFor(r realm) []catalogModel {
 // calls this at startup and on demand, so the answer must not depend on any
 // credential being present — a plugin with no account yet still has to publish
 // its models, or the user has nothing to select while authorising.
-func modelStatic(_ []byte) ([]byte, error) {
+func modelStatic(request []byte) ([]byte, error) {
+	var req pluginapi.StaticModelRequest
+	if len(request) > 0 {
+		_ = json.Unmarshal(request, &req)
+	}
+	// model.static arrives during registration, before any credential exists, and
+	// carries the host's resolved auth directory. Capturing it here is what makes
+	// the authorisation form able to write to the right place on first use — the
+	// value is otherwise only sent during auth parsing, which a panel-driven
+	// authorisation never reaches.
+	rememberAuthDir(req.Host.AuthDir)
+
 	models := buildCatalogue()
 	return okEnvelope(map[string]any{"models": models})
 }
@@ -142,6 +153,14 @@ func modelStatic(_ []byte) ([]byte, error) {
 // /v1/models whenever no account of that realm is authorised, and returning both
 // is harmless — they resolve through the same executor.
 func modelForAuth(request []byte) ([]byte, error) {
+	var req pluginapi.AuthModelRequest
+	if len(request) > 0 {
+		_ = json.Unmarshal(request, &req)
+	}
+	// Same host context as model.static, but this one runs on every credential
+	// reload, so it also repairs the cached value if the directory moved.
+	rememberAuthDir(req.Host.AuthDir)
+
 	models := buildCatalogue()
 	return okEnvelope(map[string]any{"models": models})
 }

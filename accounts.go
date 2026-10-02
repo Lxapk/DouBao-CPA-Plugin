@@ -271,9 +271,18 @@ func resolveAuthPath(entry hostAuthEntry) string {
 
 // authDirFromHost returns the directory holding the auth files.
 //
-// The value is captured from the host's config summary during auth parsing; the
-// conventional location beside the working directory is the fallback, which is where
-// CPA keeps them by default.
+// Resolution order, most authoritative first:
+//
+//	the host's config summary (HostConfigSummary.AuthDir), captured during
+//	registration and auth parsing
+//	the directory of any credential the host already reported a path for
+//	"auths" beside the working directory
+//
+// Only the first is trustworthy. The working directory is a guess that happens to
+// be right when CPA is started from its own directory and wrong under a service
+// manager, a container, or a launcher that chdirs — and a wrong guess does not fail,
+// it writes a valid credential file somewhere CPA never reads, which looks exactly
+// like "the account was never created".
 func authDirFromHost() string {
 	if cached := cachedAuthDir(); cached != "" {
 		return cached
@@ -282,6 +291,16 @@ func authDirFromHost() string {
 		return filepath.Join(wd, "auths")
 	}
 	return ""
+}
+
+// authDirIsTrusted reports whether the directory came from the host rather than a
+// guess.
+//
+// Callers that write a credential check this first: a guessed directory produces a
+// silent failure, so the write is refused with an explanation instead of succeeding
+// into the wrong place.
+func authDirIsTrusted() bool {
+	return cachedAuthDir() != ""
 }
 
 // hostConfig caches the host's configuration summary.

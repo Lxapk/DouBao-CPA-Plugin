@@ -207,6 +207,13 @@ func writeAuthRecord(creds *credentials, probe *launchResult, label string) (str
 	if dir == "" {
 		return "", fmt.Errorf("无法确定 CPA 的 auth 目录")
 	}
+	// Refuse to write into a guessed directory. The file would be valid and CPA
+	// would never read it, so the failure would surface as "the account did not
+	// appear" with no indication that a file was written somewhere else.
+	if !authDirIsTrusted() {
+		return "", fmt.Errorf(
+			"尚未获得 CPA 的 auth 目录（当前猜测为 %s）。请先重启 CPA 让插件完成注册，再重试授权。", dir)
+	}
 	if errMkdir := os.MkdirAll(dir, 0o700); errMkdir != nil {
 		return "", errMkdir
 	}
