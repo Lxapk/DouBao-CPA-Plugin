@@ -28,3 +28,7 @@ auths/
 # Go builds the binary named after the module when a bare `go build` runs, so the
 # module path doubles as an artifact name here.
 DouBao-CPA-Plugin
+
+# Release archives are produced by scripts/build-release.sh and published as
+# GitHub Release assets, not committed.
+dist/

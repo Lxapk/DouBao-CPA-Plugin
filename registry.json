@@ -1,101 +1,25 @@
 {
-  "name": "doubao",
-  "display_name": "豆包 / Dola",
-  "version": "0.1.0",
-  "author": "Lxapk",
-  "repository": "https://github.com/Lxapk/doubao-cpa-plugin",
-  "description": "把豆包（国内版）与 Dola（国际版）反代为 OpenAI 兼容接口。支持文本对话、深度思考、图片生成与视频生成。",
-  "license": "MIT",
-  "min_host_version": "7.3.15",
-  "artifact": {
-    "file": "doubao.so",
-    "build_mode": "c-shared",
-    "requires_cgo": true,
-    "platforms": ["linux/arm64", "linux/amd64", "darwin/arm64", "darwin/amd64"]
-  },
-  "capabilities": {
-    "auth_provider": true,
-    "model_registrar": true,
-    "model_provider": true,
-    "executor": true,
-    "management_api": true
-  },
-  "providers": [
+  "schema_version": 1,
+  "plugins": [
     {
       "id": "doubao",
-      "name": "豆包",
-      "kind": "cookie",
-      "realm": "doubao",
-      "host": "https://www.doubao.com",
-      "region": "CN",
-      "description": "国内版豆包。需要登录后的完整 Cookie。"
-    },
-    {
-      "id": "dola",
-      "name": "Dola",
-      "kind": "cookie",
-      "realm": "dola",
-      "host": "https://www.dola.com",
-      "region": "JP",
-      "description": "国际版 Dola。需要登录后的完整 Cookie。注意豆包账号不能跨区使用。"
+      "name": "豆包 / Dola",
+      "description": "把豆包（国内版）与 Dola（国际版）反代为 OpenAI 兼容接口。一个插件服务两个上游：文本对话、深度思考、图片生成与视频生成，凭据为浏览器 Cookie。",
+      "author": "Lxapk",
+      "version": "0.1.0",
+      "repository": "https://github.com/Lxapk/DouBao-CPA-Plugin",
+      "homepage": "https://github.com/Lxapk/DouBao-CPA-Plugin",
+      "license": "MIT",
+      "tags": [
+        "Provider",
+        "Executor",
+        "Auth",
+        "Doubao",
+        "Dola",
+        "Image",
+        "Video",
+        "Streaming"
+      ]
     }
-  ],
-  "models": [
-    {"id": "default", "name": "默认助手", "description": "账号默认对话模型"},
-    {"id": "pro", "name": "深度思考", "description": "开启深度思考，推理更充分"},
-    {"id": "image", "name": "图像生成", "description": "生成图片，返回 OpenAI 多模态 image_url"},
-    {"id": "video", "name": "视频生成", "description": "生成视频，URL 以文本与 media 字段返回"}
-  ],
-  "config_fields": [
-    {
-      "name": "realm_default",
-      "type": "enum",
-      "values": ["doubao", "dola"],
-      "default": "doubao",
-      "description": "默认上游。未在凭据中指定时使用。"
-    },
-    {
-      "name": "expose_models",
-      "type": "boolean",
-      "default": true,
-      "description": "是否在 /v1/models 中同时暴露两个上游的模型。"
-    },
-    {
-      "name": "request_timeout_seconds",
-      "type": "integer",
-      "default": 90,
-      "description": "单次上游请求超时秒数。"
-    },
-    {
-      "name": "reply_poll_seconds",
-      "type": "integer",
-      "default": 120,
-      "description": "等待文本回复的最长秒数。"
-    },
-    {
-      "name": "media_poll_seconds",
-      "type": "integer",
-      "default": 600,
-      "description": "等待图片/视频生成的最长秒数。生成远比文本慢。"
-    },
-    {
-      "name": "reply_poll_interval_ms",
-      "type": "integer",
-      "default": 700,
-      "description": "轮询间隔毫秒数。"
-    },
-    {
-      "name": "debug",
-      "type": "boolean",
-      "default": false,
-      "description": "输出详细日志（含上游请求/响应摘要）。"
-    }
-  ],
-  "notes": [
-    "CPA 必须使用 CGO_ENABLED=1 编译，否则无法加载任何插件。",
-    "凭据是浏览器 Cookie，必须包含 flow_cur_user_sec_id 与 sessionid。",
-    "同一账号不能跨区：豆包账号打 Dola 会返回 710022003 CountryRestricted。",
-    "生图/生视频消耗账号额度。",
-    "生成的图片 URL 是带签名的直链，有时效；media[].key 是稳定标识，可再次换取。"
   ]
 }
