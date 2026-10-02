@@ -6,7 +6,7 @@
       "name": "豆包 / Dola",
       "description": "把豆包（国内版）与 Dola（国际版）反代为 OpenAI 兼容接口。一个插件服务两个上游：文本对话、深度思考、图片生成与视频生成，凭据为浏览器 Cookie。",
       "author": "Lxapk",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "repository": "https://github.com/Lxapk/DouBao-CPA-Plugin",
       "homepage": "https://github.com/Lxapk/DouBao-CPA-Plugin",
       "license": "MIT",
