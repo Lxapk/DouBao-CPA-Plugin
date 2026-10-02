@@ -789,3 +789,38 @@ func TestReadOAuthCallbackCode(t *testing.T) {
 		t.Fatalf("错误载荷被当作凭据: %q", got)
 	}
 }
+
+// TestVersionMatchesRegistry pins pluginVersion to registry.json.
+//
+// The two drifted for nine releases: the published registry reached 0.2.2 while the
+// compiled constant still said 0.1.0, so the host logged builds under a version that
+// was never released and the panel displayed it. Nothing failed — the mismatch was
+// only visible by reading the host's log against the release list. This test makes it
+// a build error instead.
+func TestVersionMatchesRegistry(t *testing.T) {
+	raw, errRead := os.ReadFile("registry.json")
+	if errRead != nil {
+		t.Skipf("registry.json 不可读: %v", errRead)
+	}
+	var reg struct {
+		Plugins []struct {
+			ID      string `json:"id"`
+			Version string `json:"version"`
+		} `json:"plugins"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &reg); errUnmarshal != nil {
+		t.Fatalf("registry.json 解析失败: %v", errUnmarshal)
+	}
+	for _, p := range reg.Plugins {
+		if p.ID != pluginName {
+			continue
+		}
+		if p.Version != pluginVersion {
+			t.Fatalf("版本号不一致：registry.json 是 %q，rpc.go 是 %q\n"+
+				"两者必须相同，否则宿主记录的版本与实际发布的不符。",
+				p.Version, pluginVersion)
+		}
+		return
+	}
+	t.Fatalf("registry.json 中没有 %q 插件", pluginName)
+}

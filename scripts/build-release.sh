@@ -24,6 +24,26 @@ VERSION="${1:-0.1.0}"
 PLUGIN_ID="doubao"
 OUTDIR="dist"
 
+# Stamp the version into the source before building.
+#
+# The host reports the version the .so declares, and registry.json declares which
+# version to install. When those two drift the plugin is logged under one version
+# while being published under another, which makes every bug report ambiguous. The
+# value lived in rpc.go by hand and had silently fallen nine releases behind, so it
+# is now derived from the release version instead of remembered.
+stamp_version() {
+  local file="rpc.go"
+  if ! grep -q 'pluginVersion = "' "$file"; then
+    echo "错误：$file 中找不到 pluginVersion" >&2
+    exit 1
+  fi
+  # BSD and GNU sed differ on -i; use a temp file so both work.
+  sed "s/pluginVersion = \"[^\"]*\"/pluginVersion = \"${VERSION}\"/" "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+  printf '==> rpc.go 版本标记为 %s\n' "$VERSION"
+}
+stamp_version
+
 rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR"
 

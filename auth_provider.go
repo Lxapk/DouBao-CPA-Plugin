@@ -344,9 +344,17 @@ func authLoginPoll(request []byte) ([]byte, error) {
 
 	// Prefer the callback file: on the callback route the metadata holds no
 	// credential, and reading a stale metadata value would mask a fresh paste.
-	material := strings.TrimSpace(readOAuthCallbackCode(req.State, req.Host.AuthDir))
+	callbackCode := strings.TrimSpace(readOAuthCallbackCode(req.State, req.Host.AuthDir))
+	metaMaterial := strings.TrimSpace(pollMaterial(req))
+
+	logInfo(fmt.Sprintf("doubao: poll state=%q auth_dir=%q callback=%t(%d) metadata=%t(%d)",
+		req.State, req.Host.AuthDir,
+		callbackCode != "", len(callbackCode),
+		metaMaterial != "", len(metaMaterial)))
+
+	material := callbackCode
 	if material == "" {
-		material = strings.TrimSpace(pollMaterial(req))
+		material = metaMaterial
 	}
 	if material == "" {
 		return okEnvelope(pluginapi.AuthLoginPollResponse{

@@ -20,9 +20,19 @@ import (
 const (
 	pluginName        = "doubao"
 	pluginDisplayName = "豆包 / Dola"
-	pluginVersion     = "0.1.0"
-	pluginAuthor      = "Lxapk"
-	pluginRepo        = "https://github.com/Lxapk/doubao-cpa-plugin"
+
+	// pluginVersion is the version reported to the host and shown in the panel.
+	//
+	// It must match registry.json and the release tag. Keeping it in sync was
+	// previously manual and it silently drifted: the published releases reached
+	// 0.2.2 while this constant still said 0.1.0, so the host logged every build
+	// as 0.1.0 and the panel showed a version that did not exist. The release
+	// script now rewrites this line before building, and a test pins it to
+	// registry.json so a mismatch fails the suite rather than shipping.
+	pluginVersion = "0.2.3"
+
+	pluginAuthor = "Lxapk"
+	pluginRepo   = "https://github.com/Lxapk/doubao-cpa-plugin"
 )
 
 // registration mirrors pluginhost.rpcRegistration.
