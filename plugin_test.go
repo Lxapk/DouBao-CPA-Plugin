@@ -469,3 +469,55 @@ func TestNormalizeResourceKey(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Auth flow contract
+// ---------------------------------------------------------------------------
+
+// TestOAuthStateSatisfiesCPA pins the state format against CPA's validator.
+//
+// CPA's ValidateOAuthState allows only [A-Za-z0-9._-]. An earlier version of
+// this plugin joined the realm with ':', which CPA rejected with
+// "invalid oauth state" before the login flow could even begin.
+func TestOAuthStateSatisfiesCPA(t *testing.T) {
+	raw, err := authLoginStart([]byte(`{"provider":"doubao"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Result struct {
+			URL   string `json:"url"`
+			State string `json:"state"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Result.State == "" {
+		t.Fatal("state 为空，CPA 会报 invalid oauth state")
+	}
+	if env.Result.URL == "" {
+		t.Fatal("未返回登录 URL")
+	}
+	for _, r := range env.Result.State {
+		allowed := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.'
+		if !allowed {
+			t.Fatalf("state 含 CPA 不接受的字符 %q: %s", r, env.Result.State)
+		}
+	}
+}
+
+// TestOAuthPollRejectsGarbageCookie pins the fix for a bug that let any
+// syntactically plausible cookie authorise successfully.
+//
+// The upstream answers code 0 to an unauthenticated /alice/user/launch, so a
+// check on the code alone accepts garbage. The account handle is the real
+// signal.
+func TestOAuthPollRejectsGarbageCookie(t *testing.T) {
+	creds := &credentials{Realm: realmDoubao, Cookies: "sessionid=not-a-session; flow_cur_user_sec_id=also-fake"}
+	result, err := probeCredential(creds.withDefaults())
+	if err == nil {
+		t.Fatalf("无效 Cookie 通过了校验（返回 %v）——任意乱填都能授权成功", result != nil)
+	}
+}

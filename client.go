@@ -183,8 +183,15 @@ func (e *upstreamError) isRateLimit() bool {
 
 // launch probes the account and returns its identity and model list.
 //
-// /alice/user/launch is the same call the web client makes on load. It doubles
-// as the cheapest way to check whether a stored session still works.
+// /alice/user/launch is the same call the web client makes on load, and it is
+// the cheapest authenticated request: it needs no conversation.
+//
+// It is important to know that this endpoint answers code 0 for an
+// *unauthenticated* caller too — it simply returns an empty sec_user_id and an
+// empty model list. Treating code 0 as proof of a working session therefore
+// accepts any garbage cookie and stores an account that fails every later
+// request. The real signal is sec_user_id: it is the server-issued account
+// handle, and it is absent when the session is not valid.
 func (c *client) launch(ctx context.Context) (*launchResult, error) {
 	var raw struct {
 		Code int    `json:"code"`
@@ -204,6 +211,17 @@ func (c *client) launch(ctx context.Context) (*launchResult, error) {
 	if raw.Code != 0 {
 		return nil, &upstreamError{Code: raw.Code, Message: fmt.Sprintf("启动接口返回 code=%d %s", raw.Code, raw.Msg)}
 	}
+
+	// A code-0 response with no account handle means the session was not
+	// accepted. This is the check that distinguishes a real sign-in from a
+	// syntactically plausible cookie.
+	if strings.TrimSpace(raw.Data.SecUserID) == "" {
+		return nil, &upstreamError{
+			Code:    710012001,
+			Message: "登录态无效：上游未返回账号信息，请确认 Cookie 是登录后复制的完整值",
+		}
+	}
+
 	out := &launchResult{
 		SecUserID:      raw.Data.SecUserID,
 		AssistantBotID: raw.Data.AssistantBotID,

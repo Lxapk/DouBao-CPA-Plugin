@@ -5,11 +5,15 @@
 #
 #   <id>_<version>_<goos>_<goarch>.zip
 #
-# and inside the archive it looks for, in order:
+# and inside the archive the library must sit at the ZIP ROOT, named either
+# <id><ext> or <id>-v<version><ext>:
 #
-#   <goos>/<goarch>/<id>-v<version>.so
-#   <goos>/<goarch>/<id>.so
-#   <id>.so
+#   doubao.so        or   doubao-v0.1.0.so
+#
+# A nested layout such as linux/amd64/doubao.so is rejected with
+# "target dynamic library must be at zip root" — readTargetLibrary compares the
+# entry's full cleaned path against the bare expected names, so any directory
+# component fails the match.
 #
 # A checksums.txt asset is mandatory alongside the archives.
 #
@@ -59,18 +63,20 @@ for target in $targets; do
 
   libname="${PLUGIN_ID}-v${VERSION}.${ext}"
   stage="$OUTDIR/stage-${goos}-${goarch}"
-  mkdir -p "$stage/${goos}/${goarch}"
+  mkdir -p "$stage"
 
   printf '==> %s/%s\n' "$goos" "$goarch"
   if CGO_ENABLED=1 GOOS="$goos" GOARCH="$goarch" CC="$(crossCC "$goos" "$goarch")" \
-       go build -buildmode=c-shared -o "$stage/${goos}/${goarch}/${libname}" . 2>"$OUTDIR/err-${goos}-${goarch}.log"; then
-    # The build emits a header next to the library; the store does not want it.
-    rm -f "${stage}/${goos}/${goarch}/${PLUGIN_ID}-v${VERSION}.h"
+       go build -buildmode=c-shared -o "$stage/${libname}" . 2>"$OUTDIR/err-${goos}-${goarch}.log"; then
+    # The build emits a header next to the library; the store does not want it,
+    # and an unexpected .h would be ignored rather than rejected — but shipping
+    # it invites the question.
+    rm -f "${stage}/${PLUGIN_ID}-v${VERSION}.h"
 
     archive="${PLUGIN_ID}_${VERSION}_${goos}_${goarch}.zip"
-    # Zip from inside the staging directory so the archive root is the layout
-    # the store walks: <goos>/<goarch>/<lib>.
-    (cd "$stage" && zip -qr "$OLDPWD/$OUTDIR/$archive" .)
+    # The library must be at the archive root: zip the staging directory's
+    # contents, not the directory itself.
+    (cd "$stage" && zip -qj "$OLDPWD/$OUTDIR/$archive" ./*)
     printf '    %s\n' "$archive"
     built+=("$archive")
   else
@@ -82,7 +88,10 @@ for target in $targets; do
 done
 
 printf '\n==> checksums.txt\n'
-(cd "$OUTDIR" && shasum -a 256 ./*.zip > checksums.txt)
+# The name field must be the bare asset name. `shasum` prefixes a path ("./")
+# when given a glob, and the store looks the entry up by exact asset name, so a
+# prefixed entry reads as "checksum not found" rather than as a format error.
+(cd "$OUTDIR" && shasum -a 256 ./*.zip | sed 's|\./||' > checksums.txt)
 cat "$OUTDIR/checksums.txt"
 
 printf '\n==> 完成\n'

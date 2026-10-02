@@ -255,7 +255,10 @@ func authLoginStart(request []byte) ([]byte, error) {
 	}
 	profile := profileFor(r)
 
-	loginState := string(r) + ":" + randomUUID()
+	// The state must satisfy CPA's ValidateOAuthState, which allows only
+	// [A-Za-z0-9._-]. A separator such as ':' is rejected outright with
+	// "invalid oauth state", so the realm is joined with a hyphen.
+	loginState := string(r) + "-" + randomUUID()
 	pendingLogins.put(loginState, &pendingLogin{Realm: r})
 
 	host := strings.TrimPrefix(profile.CookieDomain, ".")
