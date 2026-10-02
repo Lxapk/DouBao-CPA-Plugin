@@ -1,0 +1,30 @@
+# Build artifacts
+*.so
+*.h
+*.dylib
+*.dll
+
+# Test binaries
+*.test
+*.out
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local credentials must never be committed.
+# The plugin authenticates with browser cookies; a stray file here would hand
+# over a live session.
+cookie.txt
+cookies.txt
+*.cookie
+auths/
+.env
+.env.*
+
+# Go builds the binary named after the module when a bare `go build` runs, so the
+# module path doubles as an artifact name here.
+DouBao-CPA-Plugin

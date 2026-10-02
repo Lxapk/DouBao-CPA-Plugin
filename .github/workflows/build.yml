@@ -1,0 +1,41 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      # The offline suite needs no account and no network, so it is the gate.
+      # CGO_ENABLED=0 keeps it fast; the c-shared build below covers the cgo path.
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./...
+
+      - name: Test
+        run: CGO_ENABLED=0 go test -count=1 ./...
+
+      # A plugin that does not build as a shared library cannot be loaded at all,
+      # so this is verified even though the artifact is not published.
+      - name: Build plugin
+        run: |
+          CGO_ENABLED=1 go build -buildmode=c-shared -o doubao.so .
+          rm -f doubao.h
+          test -f doubao.so
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："
+            echo "$unformatted"
+            exit 1
+          fi
