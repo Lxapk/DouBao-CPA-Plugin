@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -713,5 +715,77 @@ func TestAccountIsolationSurvivesMissingPath(t *testing.T) {
 	r.track(e)
 	if !r.isTracked(e) {
 		t.Fatal("entry without a path was not tracked")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Callback-box flow
+// ---------------------------------------------------------------------------
+
+// TestOAuthCallbackPath pins the file name CPA writes the submitted value to.
+//
+// The whole cookie flow depends on this path: CPA's management UI labels the box as
+// an OAuth code field, the user pastes a Doubao cookie into it, and the plugin finds
+// it here. A wrong name means the poll never sees the value and the UI spins forever.
+func TestOAuthCallbackPath(t *testing.T) {
+	dir := t.TempDir()
+	state := "doubao-2f3a1b4c-8d9e-4f2a-b1c3-4d5e6f7a8b9c"
+
+	got := filepath.Join(dir, ".oauth-doubao-"+state+".oauth")
+	if want := oauthCallbackPath(state, dir); want != got {
+		t.Fatalf("路径不符\n got: %s\nwant: %s", want, got)
+	}
+
+	// The provider that CPA interpolates is the plugin name.
+	if !strings.Contains(oauthCallbackPath(state, dir), ".oauth-"+pluginName+"-") {
+		t.Errorf("路径未使用插件名作为 provider: %s", oauthCallbackPath(state, dir))
+	}
+
+	// A state with a path separator must be refused rather than escaping the dir.
+	// ValidateOAuthState rejects it upstream, but this function builds a file path
+	// from the value, so it re-checks.
+	if p := oauthCallbackPath("../../etc/passwd", dir); p != "" {
+		t.Fatalf("带路径分隔符的 state 未被拒绝: %s", p)
+	}
+	if p := oauthCallbackPath(state, ""); p != "" {
+		t.Fatalf("空 authDir 应返回空路径: %s", p)
+	}
+}
+
+// TestReadOAuthCallbackCode covers the handoff the flow now depends on.
+func TestReadOAuthCallbackCode(t *testing.T) {
+	dir := t.TempDir()
+	state := "doubao-abc-123"
+	path := oauthCallbackPath(state, dir)
+	if path == "" {
+		t.Fatal("callback 路径为空")
+	}
+
+	// Nothing submitted yet: the poll must report pending, not an error.
+	if got := readOAuthCallbackCode(state, dir); got != "" {
+		t.Fatalf("未提交时应为空，得到 %q", got)
+	}
+
+	// A submitted value is what the user pasted into the box.
+	const cookie = "sessionid=abc; flow_cur_user_sec_id=xyz"
+	payload, _ := json.Marshal(map[string]string{"code": cookie, "state": state})
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readOAuthCallbackCode(state, dir); got != cookie {
+		t.Fatalf("读回不符\n got: %q\nwant: %q", got, cookie)
+	}
+
+	// Consuming it stops a retry from re-importing the same credential.
+	consumeOAuthCallback(state, dir)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("consume 未删除回调文件")
+	}
+
+	// An error payload must not be mistaken for a credential.
+	errPayload, _ := json.Marshal(map[string]string{"state": state, "error": "access_denied"})
+	os.WriteFile(path, errPayload, 0o600)
+	if got := readOAuthCallbackCode(state, dir); got != "" {
+		t.Fatalf("错误载荷被当作凭据: %q", got)
 	}
 }

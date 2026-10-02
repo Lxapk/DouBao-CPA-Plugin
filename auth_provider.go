@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -312,10 +314,26 @@ func authVariantHint(req pluginapi.AuthLoginStartRequest) string {
 
 // authLoginPoll answers auth.login.poll.
 //
-// The pasted cookies arrive here, in Metadata. The credential is validated
-// against the live upstream before it is accepted, so a stale or partial copy
-// fails immediately with a specific message instead of producing an account that
-// fails every later request.
+// The pasted cookies arrive here by one of two routes, and both are checked because
+// which one applies depends on how CPA drives the flow:
+//
+//	metadata  — when the panel hands the value to the poll directly
+//	callback  — when the user pastes into CPA's OAuth callback box
+//
+// The callback route is the one that matters in practice. CPA's management UI turns
+// every plugin login into an OAuth-shaped flow: it shows a "paste the callback URL or
+// code" box, and what the user types there is written to
+//
+//	<AuthDir>/.oauth-<provider>-<state>.oauth   {"code":"…","state":"…"}
+//
+// Deliberately, CPA does not care what the value is — it is opaque to the host and
+// meaningful only to the plugin. So the box that is labelled for an OAuth code is
+// where a Doubao cookie has to go, and reading that file is what makes the flow work
+// with an upstream that has no OAuth at all.
+//
+// The credential is validated against the live upstream before it is accepted, so a
+// stale or partial copy fails immediately with a specific message instead of
+// producing an account that fails every later request.
 func authLoginPoll(request []byte) ([]byte, error) {
 	var req pluginapi.AuthLoginPollRequest
 	if len(request) > 0 {
@@ -324,9 +342,12 @@ func authLoginPoll(request []byte) ([]byte, error) {
 		}
 	}
 
-	// The panel delivers the pasted value through Metadata; a few spellings are
-	// accepted so the field name is not a silent failure mode.
-	material := strings.TrimSpace(pollMaterial(req))
+	// Prefer the callback file: on the callback route the metadata holds no
+	// credential, and reading a stale metadata value would mask a fresh paste.
+	material := strings.TrimSpace(readOAuthCallbackCode(req.State, req.Host.AuthDir))
+	if material == "" {
+		material = strings.TrimSpace(pollMaterial(req))
+	}
 	if material == "" {
 		return okEnvelope(pluginapi.AuthLoginPollResponse{
 			Status:  pluginapi.AuthLoginStatusPending,
@@ -362,15 +383,79 @@ func authLoginPoll(request []byte) ([]byte, error) {
 
 	creds.applyLaunch(probe)
 
+	// Consume the callback file so a retry does not re-import the same value.
+	consumeOAuthCallback(req.State, req.Host.AuthDir)
+
 	return okEnvelope(pluginapi.AuthLoginPollResponse{
 		Status: pluginapi.AuthLoginStatusSuccess,
 		Auth:   authDataFor(creds),
 	})
 }
 
+// readOAuthCallbackCode reads the value the user submitted to CPA's callback box.
+//
+// The file name is derived from the state the host passed in, so no directory scan is
+// needed. A missing file simply means the user has not submitted anything yet, which is
+// the normal state while the panel polls.
+func readOAuthCallbackCode(state, authDir string) string {
+	path := oauthCallbackPath(state, authDir)
+	if path == "" {
+		return ""
+	}
+	raw, errRead := os.ReadFile(path)
+	if errRead != nil {
+		return ""
+	}
+	var payload struct {
+		Code  string `json:"code"`
+		State string `json:"state"`
+		Error string `json:"error"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &payload); errUnmarshal != nil {
+		return ""
+	}
+	if strings.TrimSpace(payload.Error) != "" {
+		return ""
+	}
+	return strings.TrimSpace(payload.Code)
+}
+
+// consumeOAuthCallback removes the submitted callback file.
+func consumeOAuthCallback(state, authDir string) {
+	if path := oauthCallbackPath(state, authDir); path != "" {
+		_ = os.Remove(path)
+	}
+}
+
+// oauthCallbackPath builds the callback file path CPA uses.
+//
+// The provider segment is the key CPA canonicalised when it created the session, which
+// is the plugin name for a plugin flow.
+func oauthCallbackPath(state, authDir string) string {
+	state = strings.TrimSpace(state)
+	dir := strings.TrimSpace(authDir)
+	if dir == "" {
+		dir = cachedAuthDir()
+	}
+	if dir == "" || state == "" {
+		return ""
+	}
+	// ValidateOAuthState keeps the state safe to interpolate into a path, but the
+	// check is repeated here because this function builds a file path from it.
+	for _, r := range state {
+		allowed := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.'
+		if !allowed {
+			return ""
+		}
+	}
+	file := fmt.Sprintf(".oauth-%s-%s.oauth", pluginName, state)
+	return filepath.Join(dir, file)
+}
+
 // pollMaterial pulls the pasted cookie value out of the poll metadata.
 func pollMaterial(req pluginapi.AuthLoginPollRequest) string {
-	for _, key := range []string{"cookies", "cookie", "raw", "raw_json", "content", "value"} {
+	for _, key := range []string{"cookies", "cookie", "raw", "raw_json", "content", "value", "code"} {
 		if v, ok := req.Metadata[key]; ok {
 			if s, isStr := v.(string); isStr && strings.TrimSpace(s) != "" {
 				return s
