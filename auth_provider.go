@@ -64,6 +64,12 @@ func authParse(request []byte) ([]byte, error) {
 		}
 	}
 
+	// The host reports its resolved auth directory here and nowhere else, and the
+	// account panel needs it to locate a credential file by name when several
+	// accounts share one auth index. Capturing it now means the panel works on the
+	// first use rather than only after an unrelated call happens to populate it.
+	rememberAuthDir(req.Host.AuthDir)
+
 	// Provider filter: handle ours, let others pass untouched.
 	if req.Provider != "" && !strings.EqualFold(req.Provider, pluginName) {
 		return okEnvelope(map[string]any{"Handled": false})

@@ -347,6 +347,11 @@ function showTab(id) {
     else tabs[j].classList.remove('on');
   }
   try { localStorage.setItem('doubao-panel-view', id); } catch (e) {}
+
+  // The account list is fetched when its tab is opened rather than at load, so a
+  // visitor who never looks at it does not pay for the host RPCs it needs.
+  if (id === 'view-accounts' && typeof loadAccounts === 'function') loadAccounts();
+
   if (window.scrollY > 0) window.scrollTo(0, 0);
 }
 
@@ -508,9 +513,28 @@ function textSetting(id, name, messageId) {
 // The dispatcher looks these up on window by the name in data-call, so each one is
 // a plain global function.
 
+// setRealm switches the default upstream and isolates the other side's accounts.
+//
+// It calls /realm/switch rather than /settings because the two effects belong
+// together: changing the upstream while the other realm's accounts stay routable
+// produces calls that fail with a country error, which reads as a broken credential.
 function setRealm(value) {
   segSelect('realmSeg', value);
-  setSetting('realm_default', value, 'realmMsg');
+  setNote('realmMsg', '切换中…', '');
+  callWrite('/realm/switch', { realm: value }).then(function (data) {
+    applySettings(data.settings);
+    if (data.accounts) renderAccounts(data.accounts);
+    var parts = [];
+    if (data.disabled_other) parts.push('已禁用 ' + data.disabled_other + ' 个另一侧账号');
+    if (data.reenabled) parts.push('已恢复 ' + data.reenabled + ' 个本侧账号');
+    if (data.isolate_error) parts.push('账号同步失败：' + data.isolate_error);
+    if (data.persisted === false) parts.push('未能写入配置：' + (data.error || ''));
+    setNote('realmMsg', parts.length ? parts.join('；') : '已切换', parts.some(function (p) {
+      return p.indexOf('失败') >= 0 || p.indexOf('未能') >= 0;
+    }) ? 'bad' : 'ok');
+  }).catch(function (err) {
+    setNote('realmMsg', '切换失败：' + err.message, 'bad');
+  });
 }
 
 function setExpose(value) {
@@ -525,6 +549,109 @@ function setDebug(value) {
 
 function saveNum(inputId, name) {
   numSetting(inputId, name, 'callMsg');
+}
+
+// ---- accounts ----
+// renderAccounts replaces the table body.
+//
+// The script rebuilds each row because the buttons carry a data-call the dispatcher
+// resolves at click time, and innerHTML on the wrapper is what keeps the markup in the
+// backend's Go source rather than duplicated here.
+function renderAccounts(list) {
+  var wrap = document.getElementById('acctWrap');
+  if (!wrap) return;
+  if (!list || !list.length) {
+    wrap.innerHTML = '<div class="empty">还没有账号。展开下面的「新增授权」按步骤添加。</div>';
+    return;
+  }
+  var html = '<table><thead><tr><th>账号</th><th>上游</th><th>状态</th><th>操作</th></tr></thead><tbody>';
+  list.forEach(function (a) {
+    var realmTag = a.realm === 'dola'
+      ? '<span class="tag intl">' + esc(a.realm_name) + '</span>'
+      : '<span class="tag cn">' + esc(a.realm_name) + '</span>';
+    var state = a.disabled
+      ? '<span class="tag">已禁用</span>'
+      : '<span class="tag intl">启用中</span>';
+    var action = a.disabled ? '启用' : '禁用';
+    html += '<tr>'
+      + '<td>' + esc(a.label || a.name || a.id) + '</td>'
+      + '<td>' + realmTag + '</td>'
+      + '<td>' + state + (a.status_message ? '<div class="note">' + esc(a.status_message) + '</div>' : '') + '</td>'
+      + '<td><button type="button" class="ghost"'
+      + ' data-call="toggleAccount"'
+      + ' data-arg0="' + esc(a.auth_index || '') + '"'
+      + ' data-arg1=""'
+      + ' data-arg2="' + (a.disabled ? 'true' : 'false') + '">' + action + '</button></td>'
+      + '</tr>';
+  });
+  wrap.innerHTML = html + '</tbody></table>';
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function loadAccounts() {
+  call('/accounts').then(function (data) {
+    if (data && data.accounts) renderAccounts(data.accounts);
+    else setNote('acctMsg', '未返回账号列表', 'bad');
+  }).catch(function (err) {
+    setNote('acctMsg', err.message, 'bad');
+    var wrap = document.getElementById('acctWrap');
+    if (wrap) wrap.innerHTML = '<div class="empty">' + esc(err.message) + '</div>';
+  });
+}
+
+function reloadAccounts() {
+  setNote('acctMsg', '读取中…', '');
+  call('/accounts').then(function (data) {
+    if (data && data.accounts) renderAccounts(data.accounts);
+    setNote('acctMsg', '已刷新', 'ok');
+  }).catch(function (err) {
+    setNote('acctMsg', err.message, 'bad');
+  });
+}
+
+function toggleAccount(authIndex, path, disabled) {
+  callWrite('/account/toggle', {
+    auth_index: authIndex,
+    path: path,
+    disabled: disabled === 'true' || disabled === true
+  }).then(function (data) {
+    if (data.accounts) renderAccounts(data.accounts);
+    setNote('acctMsg', (data.disabled ? '已禁用 ' : '已启用 ') + (data.changed || ''), 'ok');
+  }).catch(function (err) {
+    setNote('acctMsg', err.message, 'bad');
+  });
+}
+
+function bulkAccounts(mode) {
+  var disable = mode === 'disable';
+  call('/accounts').then(function (data) {
+    var list = (data && data.accounts) || [];
+    var targets = list.filter(function (a) { return a.disabled !== disable; });
+    if (!targets.length) { setNote('acctMsg', '无需改动', ''); return; }
+    setNote('acctMsg', '处理中…', '');
+    // Sequential rather than parallel: each call rewrites a credential file, and
+    // fanning out would race on the shared auth store.
+    var i = 0;
+    function next() {
+      if (i >= targets.length) {
+        reloadAccounts();
+        setNote('acctMsg', (disable ? '已禁用 ' : '已启用 ') + targets.length + ' 个账号', 'ok');
+        return;
+      }
+      var a = targets[i++];
+      callWrite('/account/toggle', {
+        auth_index: a.auth_index, disabled: disable
+      }).then(next).catch(function (err) {
+        setNote('acctMsg', '批量操作中断：' + err.message, 'bad');
+      });
+    }
+    next();
+  }).catch(function (err) { setNote('acctMsg', err.message, 'bad'); });
 }
 
 // ---- management key ----

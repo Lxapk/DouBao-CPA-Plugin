@@ -139,55 +139,6 @@ func renderOverviewView() string {
 // Accounts
 // ---------------------------------------------------------------------------
 
-// renderAccountsView explains how CPA stores the credentials.
-//
-// The plugin cannot list its own accounts: they live in CPA's auth store and are
-// only visible to the host. The page therefore describes the credential shape and
-// what the plugin expects, rather than pretending to enumerate something it cannot
-// see.
-func renderAccountsView() string {
-	var b strings.Builder
-	b.WriteString(`<section class="view" id="view-accounts" hidden>`)
-
-	b.WriteString(`<div class="group-head"><h2>凭据形式</h2>` +
-		`<span class="desc">插件从 CPA 的 auth 记录中读取</span></div>`)
-	b.WriteString(`<div class="box"><div class="pad">`)
-	b.WriteString(`<p style="margin:0 0 12px">每个账号是一条 CPA auth 记录，内容形如：</p>`)
-	b.WriteString(`<pre class="mono" style="margin:0;overflow-x:auto;background:var(--bg-tertiary);padding:12px;border-radius:var(--radius-md)">{` + "\n" +
-		`  "type":     "doubao",` + "\n" +
-		`  "realm":    "doubao",          // 或 "dola"` + "\n" +
-		`  "cookies":  "sessionid=…; flow_cur_user_sec_id=…",` + "\n" +
-		`  "device_id":"…",               // 可选，缺省自动生成` + "\n" +
-		`  "web_id":   "…",               // 可选` + "\n" +
-		`  "bot_id":   "…"                // 可选，缺省用该上游的默认助手` + "\n" +
-		`}</pre>`)
-	b.WriteString(`<div class="note" style="margin-top:12px">` +
-		`<code>realm</code> 决定这次调用是打到国内版还是国际版。` +
-		`未填写时按 Cookie 内容推断，仍无法判断则使用设置中的默认上游。</div>`)
-	b.WriteString(`</div></div>`)
-
-	b.WriteString(`<div class="group-head"><h2>状态判定</h2>` +
-		`<span class="desc">插件如何确认一个账号可用</span></div>`)
-	b.WriteString(`<div class="box"><div class="pad">`)
-	b.WriteString(`<p style="margin:0 0 10px">授权时会调用上游的启动接口校验。这里有一个容易误判的地方：` +
-		`该接口对<b>未登录</b>请求同样返回 <code>code: 0</code>，只是账号标识为空。</p>`)
-	b.WriteString(`<p style="margin:0 0 10px">因此插件判断的是 <code>sec_user_id</code> 是否非空 —— ` +
-		`那是服务端签发的账号标识，会话无效时不会出现。只判断 <code>code</code> 会让任意乱填的 Cookie 通过校验，` +
-		`存下一个之后每次请求都失败的账号。</p>`)
-	b.WriteString(`<div class="note">失效后重新复制 Cookie 即可，插件不需要重启。</div>`)
-	b.WriteString(`</div></div>`)
-
-	b.WriteString(`<div class="box"><header><h3>管理账号</h3>` +
-		`<span class="hint">在 CPA 的账号页面完成</span></header><div class="pad">`)
-	b.WriteString(`<div class="note">账号的新增、删除与启用由 CPA 统一管理，` +
-		`本插件只提供解析与校验逻辑。请到 CPA 面板的「账号」区域操作，` +
-		`新增时选择「豆包 / Dola」。</div>`)
-	b.WriteString(`</div></div>`)
-
-	b.WriteString(`</section>`)
-	return b.String()
-}
-
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------

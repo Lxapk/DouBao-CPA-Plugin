@@ -649,3 +649,69 @@ func TestPanelStatePathIsOutsideConfigDir(t *testing.T) {
 		t.Errorf("状态文件不得写入 CPA 的 config.yaml: %s", p)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Account isolation
+// ---------------------------------------------------------------------------
+
+// TestAuthEntryFilter pins which host entries this plugin claims.
+//
+// Getting this wrong is silent in both directions: too narrow and the panel shows no
+// accounts, too wide and another provider's credential is rewritten by the realm
+// switch.
+func TestAuthEntryFilter(t *testing.T) {
+	cases := []struct {
+		name string
+		e    pluginapi.HostAuthFileEntry
+		want bool
+	}{
+		{"provider doubao", pluginapi.HostAuthFileEntry{Provider: "doubao"}, true},
+		{"provider dola", pluginapi.HostAuthFileEntry{Provider: "dola"}, true},
+		{"type doubao", pluginapi.HostAuthFileEntry{Type: "doubao"}, true},
+		{"name prefix", pluginapi.HostAuthFileEntry{Name: "doubao-test.json"}, true},
+		{"dola name prefix", pluginapi.HostAuthFileEntry{Name: "dola-x.json"}, true},
+		{"label cn", pluginapi.HostAuthFileEntry{Label: "豆包 · 测试"}, true},
+		{"label intl", pluginapi.HostAuthFileEntry{Label: "Dola · test"}, true},
+		{"other provider", pluginapi.HostAuthFileEntry{Provider: "codebuddy", Type: "codebuddy", Name: "codebuddy-x.json"}, false},
+		{"empty", pluginapi.HostAuthFileEntry{}, false},
+	}
+	for _, c := range cases {
+		if got := isOurAuthEntry(c.e); got != c.want {
+			t.Errorf("%s: isOurAuthEntry = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestRealmIsolationTracksOnlyItsOwnChanges pins the tracking rule.
+//
+// The switch must re-enable only the accounts it disabled itself; an account the
+// operator turned off by hand has to stay off across a switch back.
+func TestRealmIsolationTracksOnlyItsOwnChanges(t *testing.T) {
+	r := &realmIsolation{}
+	bySwitch := hostAuthEntry{AuthIndex: "idx-a", Path: "/auth/doubao-a.json"}
+	byHand := hostAuthEntry{AuthIndex: "idx-b", Path: "/auth/doubao-b.json"}
+
+	r.track(bySwitch)
+	if !r.isTracked(bySwitch) {
+		t.Fatal("switch-disabled account not tracked")
+	}
+	if r.isTracked(byHand) {
+		t.Fatal("hand-disabled account should not be tracked")
+	}
+
+	r.untrack(bySwitch)
+	if r.isTracked(bySwitch) {
+		t.Fatal("untrack did not clear the entry")
+	}
+}
+
+// TestAccountIsolationSurvivesMissingPath pins that tracking falls back to the auth
+// index when a path is not reported, which is the common case from host.auth.list.
+func TestAccountIsolationSurvivesMissingPath(t *testing.T) {
+	r := &realmIsolation{}
+	e := hostAuthEntry{AuthIndex: "only-index"}
+	r.track(e)
+	if !r.isTracked(e) {
+		t.Fatal("entry without a path was not tracked")
+	}
+}

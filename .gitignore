@@ -32,3 +32,4 @@ DouBao-CPA-Plugin
 # Release archives are produced by scripts/build-release.sh and published as
 # GitHub Release assets, not committed.
 dist/
+.commitmsg

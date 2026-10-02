@@ -52,18 +52,33 @@ func managementRegistration() managementRegistrationResponse {
 			},
 			{
 				Method:      http.MethodGet,
+				Path:        "/doubao/accounts",
+				Description: "已授权账号列表，含所属上游与启用状态。",
+			},
+			{
+				Method:      http.MethodPost,
+				Path:        "/doubao/account/toggle",
+				Description: "启用或禁用某个账号。",
+			},
+			{
+				Method:      http.MethodPost,
+				Path:        "/doubao/realm/switch",
+				Description: "切换默认上游，并自动隔离另一侧的账号。",
+			},
+			{
+				Method:      http.MethodGet,
 				Path:        "/doubao/settings",
 				Description: "当前设置 JSON。",
 			},
 			{
 				Method:      http.MethodPost,
 				Path:        "/doubao/settings",
-				Description: "更新设置（默认上游、模型可见范围、超时与轮询、日志）。",
+				Description: "更新设置（模型可见范围、超时与轮询、日志）。",
 			},
 			{
 				// The page is also mounted on the management path so a browser can
-				// reach it directly, and so the in-page writes share one prefix
-				// with the page's own origin.
+				// reach it directly, and so every call the page makes shares one
+				// prefix and one credential.
 				Method:      http.MethodGet,
 				Path:        "/doubao/panel",
 				Description: "豆包 / Dola 控制台页面。",
@@ -102,6 +117,15 @@ func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementRespo
 	case "/status":
 		return jsonResponse(statusJSON())
 
+	case "/accounts":
+		return jsonResponse(map[string]any{"accounts": accountsJSON(accounts.get())})
+
+	case "/account/toggle":
+		return toggleAccount(req.Body)
+
+	case "/realm/switch":
+		return switchRealm(req.Body)
+
 	case "/settings":
 		if method == http.MethodPost || method == http.MethodPut {
 			return applySettingsPost(req.Body)
@@ -113,6 +137,125 @@ func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementRespo
 		// somewhere useful rather than on a bare 404.
 		return htmlResponse(renderMainPage())
 	}
+}
+
+// accountsJSON renders the account list for the panel.
+func accountsJSON(entries []hostAuthEntry) []map[string]any {
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		item := map[string]any{
+			"auth_index": e.AuthIndex,
+			"id":         e.ID,
+			"name":       e.Name,
+			"label":      e.Label,
+			"realm":      string(e.Realm),
+			"realm_name": profileFor(e.Realm).DisplayName,
+			"disabled":   e.Disabled,
+			"status":     e.Status,
+		}
+		if e.StatusMessage != "" {
+			item["status_message"] = e.StatusMessage
+		}
+		if e.SecUserID != "" {
+			item["sec_user_id"] = e.SecUserID
+		}
+		if !e.ExpiresAt.IsZero() {
+			item["expires_at"] = e.ExpiresAt.Format("2006-01-02")
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// toggleAccount enables or disables one credential.
+func toggleAccount(body []byte) pluginapi.ManagementResponse {
+	var req struct {
+		AuthIndex string `json:"auth_index"`
+		Path      string `json:"path"`
+		Disabled  *bool  `json:"disabled"`
+	}
+	if errUnmarshal := json.Unmarshal(body, &req); errUnmarshal != nil {
+		return errorJSON(http.StatusBadRequest, "无法解析请求："+errUnmarshal.Error())
+	}
+
+	var target *hostAuthEntry
+	for i := range accounts.get() {
+		e := accounts.get()[i]
+		if (req.AuthIndex != "" && e.AuthIndex == req.AuthIndex) ||
+			(req.Path != "" && e.Path == req.Path) {
+			target = &e
+			break
+		}
+	}
+	if target == nil {
+		return errorJSON(http.StatusNotFound, "未找到该账号")
+	}
+
+	// An omitted flag means "flip it", which is what a single toggle button sends.
+	disabled := !target.Disabled
+	if req.Disabled != nil {
+		disabled = *req.Disabled
+	}
+
+	if errSet := setAuthDisabled(*target, disabled); errSet != nil {
+		return errorJSON(http.StatusBadGateway, "操作失败："+errSet.Error())
+	}
+	accounts.invalidate()
+	return jsonResponse(map[string]any{
+		"accounts": accountsJSON(accounts.get()),
+		"changed":  target.Label,
+		"disabled": disabled,
+	})
+}
+
+// switchRealm changes the default upstream and isolates the other realm's accounts.
+//
+// The two effects are deliberately one action: picking an upstream while leaving the
+// other realm's accounts routable produces calls that fail with a country error, which
+// reads as a broken credential rather than as a setting that needs the other side
+// turned off.
+func switchRealm(body []byte) pluginapi.ManagementResponse {
+	var req struct {
+		Realm string `json:"realm"`
+	}
+	if errUnmarshal := json.Unmarshal(body, &req); errUnmarshal != nil {
+		return errorJSON(http.StatusBadRequest, "无法解析请求："+errUnmarshal.Error())
+	}
+	target := normalizeRealm(req.Realm)
+	if target == "" {
+		return errorJSON(http.StatusBadRequest, "未知上游，可选 doubao 或 dola")
+	}
+
+	next := state.settings.get()
+	next.RealmDefault = target
+	state.settings.set(next)
+
+	persisted := true
+	var persistErr string
+	if errPersist := persistSettings(map[string]json.RawMessage{
+		"realm_default": json.RawMessage(`"` + string(target) + `"`),
+	}); errPersist != nil {
+		persisted = false
+		persistErr = errPersist.Error()
+	}
+
+	disabledOther, reenabled, errIsolate := applyRealmIsolation(target)
+	isolateErr := ""
+	if errIsolate != nil {
+		isolateErr = errIsolate.Error()
+	}
+
+	return jsonResponse(map[string]any{
+		"realm":          string(target),
+		"realm_name":     profileFor(target).DisplayName,
+		"disabled_other": disabledOther,
+		"reenabled":      reenabled,
+		"isolate_error":  isolateErr,
+		"persisted":      persisted,
+		"error":          persistErr,
+		"accounts":       accountsJSON(accounts.get()),
+		"settings":       settingsJSON(next),
+	})
 }
 
 // normalisePanelPath reduces a request path to the tail this handler switches on.
