@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -823,4 +825,125 @@ func TestVersionMatchesRegistry(t *testing.T) {
 		return
 	}
 	t.Fatalf("registry.json 中没有 %q 插件", pluginName)
+}
+
+// ---------------------------------------------------------------------------
+// Plugin-side authorisation
+// ---------------------------------------------------------------------------
+
+// TestNormaliseCookieInput covers the shapes a user actually pastes.
+//
+// Each of these arrives from a different copy action in DevTools, and rejecting any
+// of them would look like "the cookie is wrong" when it is the wrapper that is.
+func TestNormaliseCookieInput(t *testing.T) {
+	const bare = "sessionid=a; flow_cur_user_sec_id=b"
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare", bare, bare},
+		{"header line", "Cookie: " + bare, bare},
+		{"double quoted", `"` + bare + `"`, bare},
+		{"single quoted", `'` + bare + `'`, bare},
+		{"crlf wrap", "sessionid=a;\r\n flow_cur_user_sec_id=b", bare},
+		{"newline wrap", "sessionid=a;\n flow_cur_user_sec_id=b", bare},
+		{"leading space", "   " + bare + "  ", bare},
+		{"empty", "", ""},
+		{"whitespace only", "   ", ""},
+	}
+	for _, c := range cases {
+		if got := normaliseCookieInput(c.in); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestNormaliseCookieInputAcceptsSubmittedURL pins the bridge from the shape CPA's box
+// demands to the shape the plugin wants.
+//
+// A user who tried CPA's callback box first has a "?state=…&code=…" string on their
+// clipboard. Pasting that into the plugin's field must work rather than be taken
+// literally as a cookie.
+func TestNormaliseCookieInputAcceptsSubmittedURL(t *testing.T) {
+	cookie := "sessionid=abc; flow_cur_user_sec_id=xyz"
+	submitted := "?state=doubao-1&code=" + url.QueryEscape(cookie)
+	got := normaliseCookieInput(submitted)
+	if got != cookie {
+		t.Fatalf("未能从回调 URL 中取出凭据\n got: %q\nwant: %q", got, cookie)
+	}
+}
+
+// TestSanitiseForFileName guards the path built from a server-issued handle.
+func TestSanitiseForFileName(t *testing.T) {
+	if got := sanitiseForFileName("MS4wLjABAAAA15_qV/bad"); strings.ContainsAny(got, `/\`) {
+		t.Errorf("路径分隔符未被移除: %q", got)
+	}
+	if got := sanitiseForFileName(".."); got != "" {
+		t.Errorf("'..' 应被拒绝，得到 %q", got)
+	}
+	if got := sanitiseForFileName("."); got != "" {
+		t.Errorf("'.' 应被拒绝，得到 %q", got)
+	}
+	if got := sanitiseForFileName("MS4wLjABAAAA15_qV_t4vOg8"); got != "MS4wLjABAAAA15_qV_t4vOg8" {
+		t.Errorf("合法标识被改动: %q", got)
+	}
+}
+
+// TestAuthorizeRejectsEmptyCookie pins the first check the form relies on.
+func TestAuthorizeRejectsEmptyCookie(t *testing.T) {
+	body, _ := json.Marshal(map[string]string{"cookies": "   "})
+	resp := handlePanelRoute(pluginapi.ManagementRequest{
+		Method: "POST", Path: "/authorize", Body: body,
+	})
+	if resp.StatusCode == 200 {
+		t.Fatalf("空 Cookie 竟然通过: %s", resp.Body)
+	}
+	var out authorizeResult
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		t.Fatalf("错误响应不是合法 JSON: %v", err)
+	}
+	if out.OK {
+		t.Error("失败响应里 ok 为 true")
+	}
+	if out.Error == "" {
+		t.Error("失败响应没有给出原因")
+	}
+}
+
+// TestAuthorizeRejectsBadJSON pins that a malformed body is a 400, not a panic.
+func TestAuthorizeRejectsBadJSON(t *testing.T) {
+	resp := handlePanelRoute(pluginapi.ManagementRequest{
+		Method: "POST", Path: "/authorize", Body: []byte("{not json"),
+	})
+	if resp.StatusCode != 400 {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestAuthorizeHintForRegionError pins the hint that turns a confusing failure into a
+// one-click fix: the message names the wrong realm, and the remedy is the selector
+// directly above the field.
+func TestAuthorizeHintForRegionError(t *testing.T) {
+	cases := []struct {
+		err  string
+		want string
+	}{
+		{"upstream error 710022003 CountryRestricted", "另一侧上游"},
+		{"登录态无效：上游未返回账号信息", "flow_cur_user_sec_id"},
+		{"dial tcp: i/o timeout", "超时"},
+		{"something else entirely", ""},
+	}
+	for _, c := range cases {
+		got := authorizeHintFor(errors.New(c.err))
+		if c.want == "" {
+			if got != "" {
+				t.Errorf("%q 不应给出提示，得到 %q", c.err, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%q 的提示 = %q, want 包含 %q", c.err, got, c.want)
+		}
+	}
 }

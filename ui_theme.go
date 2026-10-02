@@ -404,7 +404,13 @@ function call(path, options) {
         if (resp.status === 401 || resp.status === 403) {
           msg = '未授权：请在「设置」里填入 CPA 管理密钥';
         }
-        throw new Error(msg);
+        var err = new Error(msg);
+        // Carry the parsed body: an authorisation failure returns a structured 400
+        // whose error_hint is the actionable half of the message, and rethrowing a
+        // bare string would drop it.
+        err.data = data;
+        err.status = resp.status;
+        throw err;
       }
       return data;
     });
@@ -418,8 +424,6 @@ function callWrite(path, body) {
     body: JSON.stringify(body)
   });
 }
-
-function parseResponse(resp) { return resp; }
 
 // ---- settings ----
 // loadSettings pulls the live values on open.
@@ -549,6 +553,86 @@ function setDebug(value) {
 
 function saveNum(inputId, name) {
   numSetting(inputId, name, 'callMsg');
+}
+
+// ---- plugin-side authorisation ----
+// The form talks to /doubao/authorize, which validates the cookie against the live
+// upstream and writes the auth record. CPA's own OAuth callback box is not involved:
+// it insists on a callback URL and answers "state is required" to a pasted cookie.
+
+function pickAuthRealm(value) {
+  segSelect('authRealmSeg', value);
+  setNote('authResult', '', '');
+}
+
+function selectedAuthRealm() {
+  var seg = document.getElementById('authRealmSeg');
+  if (!seg) return '';
+  var on = seg.querySelector('button.on');
+  return on ? on.getAttribute('data-value') : '';
+}
+
+function clearAuthForm() {
+  var ta = document.getElementById('authCookies');
+  var lb = document.getElementById('authLabel');
+  if (ta) ta.value = '';
+  if (lb) lb.value = '';
+  setNote('authResult', '', '');
+}
+
+function submitAuthorize() {
+  var ta = document.getElementById('authCookies');
+  var lb = document.getElementById('authLabel');
+  var btn = document.getElementById('authSubmit');
+  if (!ta) return;
+  var cookies = (ta.value || '').trim();
+  if (!cookies) { setNote('authResult', '请先粘贴 Cookie。', 'bad'); return; }
+
+  if (btn) { btn.disabled = true; btn.textContent = '校验中…'; }
+  setNote('authResult', '正在向上游校验…', '');
+
+  callWrite('/authorize', {
+    cookies: cookies,
+    realm: selectedAuthRealm(),
+    label: lb ? (lb.value || '').trim() : ''
+  }).then(function (data) {
+    showAuthorizeResult(data, true);
+    if (data && data.ok) {
+      ta.value = '';
+      if (lb) lb.value = '';
+      loadAccounts();
+    }
+  }).catch(function (err) {
+    // A rejected credential comes back as a structured 400, so the body carries the
+    // detail (including the actionable hint) even though the status is an error.
+    showAuthorizeResult(err.data, false);
+    if (!err.data) setNote('authResult', err.message, 'bad');
+  }).then(function () {
+    if (btn) { btn.disabled = false; btn.textContent = '校验并授权'; }
+  });
+}
+
+function showAuthorizeResult(data, ok) {
+  var host = document.getElementById('authResult');
+  if (!host) return;
+  if (!data) { host.innerHTML = ''; return; }
+
+  if (!data.ok) {
+    var msg = esc(data.error || '授权失败');
+    if (data.error_hint) msg += '<div class="note" style="margin-top:6px">' + esc(data.error_hint) + '</div>';
+    host.innerHTML = '<div class="toast bad" style="max-width:none">' + msg + '</div>';
+    return;
+  }
+
+  var lines = [];
+  lines.push('<div><b>授权成功</b> — ' + esc(data.realm_name || data.realm) + '</div>');
+  if (data.label) lines.push('<div class="note">账号：' + esc(data.label) + '</div>');
+  if (data.model_count) lines.push('<div class="note">可用模型：' + esc(data.model_count) + ' 个</div>');
+  if (data.expires_at) lines.push('<div class="note">会话有效期至：' + esc(data.expires_at) + '</div>');
+  (data.warnings || []).forEach(function (w) {
+    lines.push('<div class="note bad">' + esc(w) + '</div>');
+  });
+  host.innerHTML = '<div class="toast ok" style="max-width:none">' + lines.join('') + '</div>';
 }
 
 // ---- accounts ----

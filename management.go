@@ -61,6 +61,15 @@ func managementRegistration() managementRegistrationResponse {
 				Description: "启用或禁用某个账号。",
 			},
 			{
+				// The panel's own authorisation path. CPA's OAuth callback box wants
+				// a callback URL and rejects a bare cookie with "state is required",
+				// which is not something a user can work around, so the plugin takes
+				// the credential here instead and writes the auth record itself.
+				Method:      http.MethodPost,
+				Path:        "/doubao/authorize",
+				Description: "用粘贴的 Cookie 授权一个账号（国内版或国际版）。",
+			},
+			{
 				Method:      http.MethodPost,
 				Path:        "/doubao/realm/switch",
 				Description: "切换默认上游，并自动隔离另一侧的账号。",
@@ -122,6 +131,9 @@ func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementRespo
 
 	case "/account/toggle":
 		return toggleAccount(req.Body)
+
+	case "/authorize":
+		return authorizeAccount(req.Body)
 
 	case "/realm/switch":
 		return switchRealm(req.Body)

@@ -59,72 +59,86 @@ func renderAccountsBox() string {
 	return b.String()
 }
 
-// renderAuthorisationBox is the authorisation guidance.
+// renderAuthorisationBox is the authorisation form.
 //
-// The upstream has no device-code flow and no loopback redirect — its passport
-// endpoints answer "该应用无权限" to a web client — so the credential is the browser's
-// own cookie jar. Pretending otherwise would produce a login button that cannot work.
-// What the page can do is make the manual step unambiguous: a real link to the sign-in
-// page for each upstream, and the exact path through DevTools to the value to copy.
+// This is the plugin's own path, and the only one a user is pointed at. CPA's
+// management UI offers an OAuth-shaped box that demands a callback URL and rejects a
+// pasted cookie with "state is required" — a message that gives no hint that the
+// expected input is a URL, let alone a URL-encoded one. Doing it here removes the
+// encoding exercise entirely: the cookie goes straight into a field, the plugin checks
+// it against the live upstream, and the result is reported line by line.
 func renderAuthorisationBox() string {
+	settings := state.settings.get()
 	var b strings.Builder
-	b.WriteString(`<div class="box">`)
 
+	b.WriteString(`<div class="box">`)
+	b.WriteString(`<header><h3>在面板里授权</h3>` +
+		`<span class="hint">不需要经过 CPA 的 OAuth 回调</span></header>`)
+	b.WriteString(`<div class="pad">`)
+
+	// ---- which upstream this credential belongs to ----
+	b.WriteString(`<div class="setting-group" style="padding:0 0 14px">`)
+	b.WriteString(`<div class="setting-label">`)
+	b.WriteString(`<span class="name">授权归属</span>`)
+	b.WriteString(`<span class="desc">决定用哪个站点校验这份 Cookie。选错会提示区域不可用。</span>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`<div class="seg" id="authRealmSeg">`)
+	for _, r := range allRealms {
+		cls := ""
+		if r == settings.RealmDefault {
+			cls = "on"
+		}
+		b.WriteString(`<button type="button" class="` + cls + `"` +
+			` data-value="` + string(r) + `"` +
+			` data-call="pickAuthRealm" data-arg0="` + string(r) + `">` +
+			realmLabel(r) + `</button>`)
+	}
+	b.WriteString(`</div></div>`)
+
+	// ---- the paste target ----
+	b.WriteString(`<div class="setting-group" style="padding:0 0 12px">`)
+	b.WriteString(`<div class="setting-label">`)
+	b.WriteString(`<span class="name">Cookie</span>`)
+	b.WriteString(`<span class="desc">从浏览器开发者工具里的 <code>Cookie</code> 请求头复制整串值，` +
+		`直接粘贴即可 —— 不需要做任何转义。</span>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`<textarea id="authCookies" rows="5" spellcheck="false"` +
+		` placeholder="sessionid=...; flow_cur_user_sec_id=...; ..."` +
+		` style="width:100%;background:var(--bg-secondary);border:1px solid var(--border-primary);` +
+		`border-radius:var(--radius-md);color:var(--text-primary);font-family:var(--mono);` +
+		`font-size:12px;padding:10px;outline:none;resize:vertical"></textarea>`)
+	b.WriteString(`<div class="row" style="margin-top:9px">`)
+	b.WriteString(`<input type="text" id="authLabel" placeholder="备注名（可选）" style="flex:1 1 200px">`)
+	b.WriteString(`<span class="btn-end">`)
+	b.WriteString(`<button type="button" class="ghost" data-call="clearAuthForm">清空</button>`)
+	b.WriteString(`<button type="button" class="primary" id="authSubmit" data-call="submitAuthorize">校验并授权</button>`)
+	b.WriteString(`</span></div>`)
+	b.WriteString(`<div id="authResult" style="margin-top:10px"></div>`)
+	b.WriteString(`</div>`)
+
+	// ---- how to get the value ----
+	b.WriteString(`<div class="setting-group" style="padding:0">`)
+	b.WriteString(`<div class="setting-label"><span class="name">在哪里找到它</span></div>`)
 	for i, r := range allRealms {
 		profile := profileFor(r)
 		if i > 0 {
-			b.WriteString(`<div style="border-top:1px solid var(--border-color)"></div>`)
+			b.WriteString(`<div style="height:12px"></div>`)
 		}
-
-		b.WriteString(`<header><h3>` + realmLabel(r) + ` 授权</h3></header>`)
-		b.WriteString(`<div class="pad">`)
-
-		// A real link, not a bare URL in prose: the user is meant to click it.
-		loginURL := profile.Host + "/chat/"
-		b.WriteString(`<div class="row" style="margin-bottom:12px">`)
-		b.WriteString(`<a class="ghost" style="text-decoration:none;padding:6px 14px;border:1px solid var(--border-primary);border-radius:var(--radius-md);color:var(--text-secondary)"` +
-			` href="` + htmlEscape(loginURL) + `" target="_blank" rel="noopener">` +
-			`打开 ` + htmlEscape(profile.Host) + ` 登录 ↗</a>`)
-		b.WriteString(`<span class="note">先在浏览器里完成登录，再复制 Cookie</span>`)
-		b.WriteString(`</div>`)
-
-		b.WriteString(`<ol class="steps">`)
-		b.WriteString(`<li>点击上面的链接，在<b>同一个浏览器</b>里登录 ` + htmlEscape(profile.DisplayName) + `。</li>`)
-		b.WriteString(`<li>登录成功后按 <b>F12</b> 打开开发者工具，切到 <b>Network</b> 面板。</li>`)
-		b.WriteString(`<li>刷新页面，点击任意一条 ` + htmlEscape(strings.TrimPrefix(profile.CookieDomain, ".")) +
-			` 域名的请求。</li>`)
-		b.WriteString(`<li>在 <b>Request Headers</b> 里找到 <code>Cookie</code>，右键 → <b>Copy value</b>。</li>`)
-		b.WriteString(`<li>回到 CPA 的账号页，新增 <b>豆包 / Dola</b> 账号，把整串粘贴进去。</li>`)
-		b.WriteString(`</ol>`)
-
-		b.WriteString(`<div class="setting-effect" style="margin-top:12px">`)
-		b.WriteString(`必须是<b>登录后</b>的完整 Cookie，其中要包含 <code>flow_cur_user_sec_id</code> 与 ` +
-			`<code>sessionid</code>。只复制其中几个字段会失败——网关绑定的是整套会话。`)
-		b.WriteString(`</div>`)
-
-		b.WriteString(`<div class="note" style="margin-top:8px">`)
-		b.WriteString(`该账号会归到 <b>` + htmlEscape(profile.DisplayName) + `</b>（` + profile.Region + `）。`)
-		if r == realmDoubao {
-			b.WriteString(`两个上游的账号不能互换：豆包账号调用 Dola 会返回 <code>710022003 CountryRestricted</code>。`)
-		} else {
-			b.WriteString(`两个上游的账号不能互换：Dola 账号调用豆包会返回 <code>710022003 CountryRestricted</code>。`)
-		}
-		b.WriteString(`</div>`)
+		b.WriteString(`<div class="row" style="margin-bottom:6px">`)
+		b.WriteString(`<a class="ghost" style="text-decoration:none;padding:5px 12px;border:1px solid var(--border-primary);` +
+			`border-radius:var(--radius-md);color:var(--text-secondary);font-size:13px"` +
+			` href="` + htmlEscape(profile.Host+"/chat/") + `" target="_blank" rel="noopener">` +
+			realmLabel(r) + ` 登录页 ↗</a>`)
+		b.WriteString(`<span class="note">登录后 F12 → Network → 刷新 → 点击任意 ` +
+			htmlEscape(strings.TrimPrefix(profile.CookieDomain, ".")) + ` 请求 → 复制 <code>Cookie</code></span>`)
 		b.WriteString(`</div>`)
 	}
-
+	b.WriteString(`<div class="note" style="margin-top:8px">` +
+		`必须包含 <code>sessionid</code> 与 <code>flow_cur_user_sec_id</code>。` +
+		`缺少后者会被判定为会话无效 —— 插件会在校验时直接告诉你。</div>`)
 	b.WriteString(`</div>`)
 
-	// Why there is no one-click login, stated plainly so it does not read as an
-	// omission.
-	b.WriteString(`<div class="box"><div class="pad">`)
-	b.WriteString(`<div class="setting-label"><span class="name">为什么没有一键登录</span>`)
-	b.WriteString(`<span class="desc">豆包未开放网页端 OAuth：其 passport 接口对浏览器来源返回 ` +
-		`「该应用无权限」，只能走 App 端。因此凭据取浏览器自己的 Cookie。</span></div>`)
-	b.WriteString(`<div class="note">好在 Cookie 的获取方式是固定的，照上面的步骤操作即可。` +
-		`失效后重新复制一次就能恢复，不需要重启 CPA。</div>`)
 	b.WriteString(`</div></div>`)
-
 	return b.String()
 }
 

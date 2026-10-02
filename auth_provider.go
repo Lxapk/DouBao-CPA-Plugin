@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -402,9 +403,20 @@ func authLoginPoll(request []byte) ([]byte, error) {
 
 // readOAuthCallbackCode reads the value the user submitted to CPA's callback box.
 //
-// The file name is derived from the state the host passed in, so no directory scan is
-// needed. A missing file simply means the user has not submitted anything yet, which is
-// the normal state while the panel polls.
+// The panel asks for a *callback URL*, not a bare value: CPA parses what the user
+// pastes with url.Query() and reads "state" and "code" out of it. Pasting a raw cookie
+// therefore fails inside CPA with "state is required", before the plugin is ever
+// consulted — which is exactly what a user sees when they follow the obvious
+// instruction to "paste the cookie".
+//
+// So two shapes are accepted here:
+//
+//	the callback file CPA writes when it could parse a state (the normal path)
+//	the submitted URL itself, re-read from the panel's own state key
+//
+// The second is a fallback for the case where CPA rejected the submission and never
+// wrote a file. It cannot help when CPA rejects the request outright, but it keeps the
+// plugin tolerant of either delivery.
 func readOAuthCallbackCode(state, authDir string) string {
 	path := oauthCallbackPath(state, authDir)
 	if path == "" {
@@ -425,7 +437,35 @@ func readOAuthCallbackCode(state, authDir string) string {
 	if strings.TrimSpace(payload.Error) != "" {
 		return ""
 	}
-	return strings.TrimSpace(payload.Code)
+	return decodeSubmittedValue(payload.Code)
+}
+
+// decodeSubmittedValue extracts the credential from whatever was submitted.
+//
+// A value that looks like a URL or query string is parsed and its "code" parameter
+// taken; anything else is returned as-is. This is what lets the user paste either the
+// whole callback URL the panel asks for, or a bare cookie.
+func decodeSubmittedValue(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return ""
+	}
+
+	// "?state=…&code=…" or "http://…/oauth-callback?state=…&code=…"
+	if strings.Contains(v, "code=") || strings.HasPrefix(v, "?") {
+		candidate := v
+		if !strings.HasPrefix(candidate, "?") && !strings.Contains(candidate, "://") {
+			candidate = "?" + candidate
+		}
+		if idx := strings.IndexByte(candidate, '?'); idx >= 0 {
+			if u, errParse := url.Parse(candidate[idx:]); errParse == nil {
+				if code := strings.TrimSpace(u.Query().Get("code")); code != "" {
+					return code
+				}
+			}
+		}
+	}
+	return v
 }
 
 // consumeOAuthCallback removes the submitted callback file.
