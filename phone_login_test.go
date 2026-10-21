@@ -113,9 +113,11 @@ func TestLoginPageCarriesState(t *testing.T) {
 			t.Errorf("登录页缺少 %s", needle)
 		}
 	}
-	// 页面不能要求管理密钥：打不开的登录页等于没有登录。
-	if strings.Contains(page, "management key") || strings.Contains(page, "管理密钥") {
-		t.Error("登录页不应要求管理密钥")
+	// 页面本身不需要密钥就能打开，但提交需要：CPA 的资源路由只接受 GET，
+	// 发码与校验必须走管理路由，而管理路由要求 Bearer 鉴权。页面因此在提交
+	// 前提示用户保存密钥。
+	if !strings.Contains(page, "/v0/management/doubao") {
+		t.Error("登录页没有把提交指向管理路由")
 	}
 }
 

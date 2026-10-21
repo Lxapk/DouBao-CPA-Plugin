@@ -85,7 +85,23 @@ func loginPageScript(state string) string {
 (function () {
   "use strict";
   var STATE = ` + string(stateJSON) + `;
-  var BASE = "/v0/resource/plugins/` + pluginName + `/login";
+
+  // Submissions go to the management routes, not the resource route the page
+  // itself was served from: CPA's resource handler only accepts GET (anything
+  // else 404s), and these two calls must be POSTs.
+  var MGMT = "/v0/management/` + pluginName + `";
+  var PANEL_KEY = "cpa-management-key";
+
+  function managementKey() {
+    var names = [PANEL_KEY, "doubao.mgmtKey"];
+    for (var i = 0; i < names.length; i++) {
+      try {
+        var v = (localStorage.getItem(names[i]) || "").trim();
+        if (v) return v;
+      } catch (e) {}
+    }
+    return "";
+  }
 
   function note(text, kind) {
     var el = document.getElementById("loginMsg");
@@ -101,9 +117,17 @@ func loginPageScript(state string) string {
   }
 
   function post(path, body) {
-    return fetch(path, {
+    var k = managementKey();
+    if (!k) {
+      return Promise.reject(new Error("请先在插件「设置」里保存 CPA 管理密钥，登录页需要它才能提交"));
+    }
+    return fetch(MGMT + path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + k,
+        "X-Management-Key": k
+      },
       body: JSON.stringify(body)
     }).then(function (resp) {
       return resp.text().then(function (text) {
@@ -133,7 +157,7 @@ func loginPageScript(state string) string {
     var btn = document.getElementById("sendBtn");
     if (btn) { btn.disabled = true; btn.textContent = "发送中…"; }
     note("正在发送…");
-    post(BASE + "/send", { state: STATE, phone: p }).then(function (data) {
+    post("/login/send", { state: STATE, phone: p }).then(function (data) {
       if (data && data.ok) {
         note("验证码已发送", "ok");
         var input = document.getElementById("code");
@@ -155,7 +179,7 @@ func loginPageScript(state string) string {
     var btn = document.getElementById("loginBtn");
     if (btn) { btn.disabled = true; btn.textContent = "登录中…"; }
     note("正在登录…");
-    post(BASE + "/verify", { state: STATE, phone: p, code: c }).then(function (data) {
+    post("/login/verify", { state: STATE, phone: p, code: c }).then(function (data) {
       if (data && data.ok) {
         note("登录成功", "ok");
         result("<div><b>登录成功</b></div><div class=\"note\">" +
@@ -181,6 +205,15 @@ func loginPageScript(state string) string {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
     });
   }
+
+  // 管理密钥是提交的前提：CPA 的管理路由要求 Bearer 鉴权，而登录页是被
+  // 新标签页打开的，拿不到父窗口的会话，只能读 localStorage 里已保存的密钥。
+  function checkKey() {
+    if (managementKey()) return;
+    note("请先在插件「设置」里保存 CPA 管理密钥，否则无法提交", "bad");
+  }
+
+  checkKey();
 
   document.addEventListener("click", function (ev) {
     var el = ev.target;
