@@ -20,8 +20,13 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
+            # 32-bit headers let the default gcc emit -m64 objects.
+            apt: gcc-multilib
+            cc: gcc
           - goos: linux
             goarch: arm64
+            apt: gcc-aarch64-linux-gnu
+            cc: aarch64-linux-gnu-gcc
     steps:
       - uses: actions/checkout@v4
 
@@ -56,11 +61,19 @@ jobs:
           grep -q "pluginVersion = \"${version}\"" rpc.go
           echo "VERSION=${version}" >> "$GITHUB_ENV"
 
+      # c-shared links through the C toolchain of the *target*, so a cross
+      # compiler is required; the runner only ships the native one.
+      - name: Install cross compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ${{ matrix.apt }}
+
       - name: Build plugin
         env:
           CGO_ENABLED: '1'
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
         run: |
           libname="doubao-v${VERSION}.so"
           go build -buildmode=c-shared -trimpath -o "$libname" .
