@@ -1,26 +1,71 @@
 package main
 
 import (
-	"fmt"
+	"html"
 	"strings"
 )
 
-// The accounts view: the list, per-account enable/disable, and the authorisation
-// guidance.
+// The accounts page: the pool, per-account enable/disable, and the authorisation
+// form.
 //
 // This is the page the whole realm switch exists for. The two upstreams hold
-// separate accounts and reject each other's sessions, so seeing which accounts exist,
-// which realm each belongs to, and which are currently routable is the difference
-// between a switch that works and a support question.
+// separate accounts and reject each other's sessions, so seeing which accounts
+// exist, which realm each belongs to, and which are currently routable is the
+// difference between a switch that works and a support question.
 
 // renderAccountsView builds the accounts page.
 func renderAccountsView() string {
-	var b strings.Builder
-	b.WriteString(`<section class="view" id="view-accounts" hidden>`)
+	entries := accounts.get()
+	total := len(entries)
+	enabled, blocked := 0, 0
+	for _, e := range entries {
+		if e.Disabled || e.AuthRejected {
+			blocked++
+			continue
+		}
+		enabled++
+	}
 
-	b.WriteString(`<div class="group-head"><h2>已授权账号</h2>` +
-		`<span class="desc">切换上游时会自动禁用另一侧的账号</span></div>`)
-	b.WriteString(renderAccountsBox())
+	var b strings.Builder
+	b.WriteString(`<section class="view" id="view-accounts">`)
+
+	b.WriteString(`<div class="stats">`)
+	statCard(&b, "", "账号总数", total)
+	statCard(&b, "good", "启用中", enabled)
+	statCard(&b, "warn", "国内版", countRealm(entries, realmDoubao))
+	statCard(&b, "bad", "已停用", blocked)
+	b.WriteString(`</div>`)
+
+	b.WriteString(`<div class="box">`)
+	b.WriteString(`<header><h3>账号 <span class="hint">授权后自动出现</span></h3>`)
+	b.WriteString(`<span class="grow"></span><span class="note" id="accountMsg"></span>`)
+	b.WriteString(`<button type="button" class="xs" data-call="refreshAccounts">刷新</button>`)
+	b.WriteString(`</header>`)
+
+	// The table is filled from /accounts on load and replaced after every action,
+	// so a row never shows a state the backend disagrees with.
+	b.WriteString(`<div id="acctWrap">`)
+	if total == 0 {
+		b.WriteString(`<div class="empty">还没有账号。展开下面的「新增授权」粘贴 Cookie。</div>`)
+	} else {
+		b.WriteString(`<div class="tbl-wrap"><table><thead><tr>`)
+		b.WriteString(`<th>账号</th><th class="state">上游</th><th class="state">状态</th>`)
+		b.WriteString(`<th class="num">调用</th><th class="num">最近使用</th><th class="act"></th>`)
+		b.WriteString(`</tr></thead><tbody>`)
+		for _, e := range entries {
+			b.WriteString(renderAccountRow(e))
+		}
+		b.WriteString(`</tbody></table></div>`)
+	}
+	b.WriteString(`</div>`)
+
+	b.WriteString(`<div class="foot"><span class="note">` +
+		`启停会写入 CPA 的 auth 文件，与该账号在 CPA 面板里的状态保持一致。</span>` +
+		`<span class="grow"></span>` +
+		`<button type="button" class="xs" data-call="bulkAccounts" data-arg0="enable">全部启用</button>` +
+		`<button type="button" class="xs" data-call="bulkAccounts" data-arg0="disable">全部停用</button>` +
+		`</div>`)
+	b.WriteString(`</div>`)
 
 	b.WriteString(`<div class="group-head"><h2>新增授权</h2>` +
 		`<span class="desc">豆包没有 OAuth 回调，凭据是浏览器 Cookie</span></div>`)
@@ -30,33 +75,78 @@ func renderAccountsView() string {
 	return b.String()
 }
 
-// renderAccountsBox renders the account table.
-//
-// The table is filled from /accounts on load and replaced wholesale after every
-// action, so the page never shows a state the backend disagrees with.
-func renderAccountsBox() string {
-	var b strings.Builder
-	b.WriteString(`<div class="box">`)
-	b.WriteString(`<header><h3>账号列表</h3><span class="grow"></span>`)
-	b.WriteString(`<span class="note" id="acctMsg"></span>`)
-	b.WriteString(`<button type="button" class="ghost" data-call="reloadAccounts">刷新</button>`)
-	b.WriteString(`</header>`)
-	b.WriteString(`<div class="pad" style="padding:0"><div id="acctWrap">`)
-	b.WriteString(`<div class="empty">正在读取…</div>`)
-	b.WriteString(`</div></div>`)
-	b.WriteString(`</div>`)
+// countRealm counts the accounts of one upstream.
+func countRealm(entries []hostAuthEntry, r realm) int {
+	n := 0
+	for _, e := range entries {
+		if e.Realm == r {
+			n++
+		}
+	}
+	return n
+}
 
-	// Two bulk actions that map onto the switch's own semantics, for when the list
-	// needs clearing before a realm change rather than by it.
-	b.WriteString(`<div class="box"><div class="pad">`)
-	b.WriteString(`<div class="row">`)
-	b.WriteString(`<span class="note">批量操作只影响当前列出的账号，不会改动其他插件的凭据。</span>`)
-	b.WriteString(`<span class="btn-end">`)
-	b.WriteString(`<button type="button" class="ghost" data-call="bulkAccounts" data-arg0="enable">全部启用</button>`)
-	b.WriteString(`<button type="button" class="ghost" data-call="bulkAccounts" data-arg0="disable">全部禁用</button>`)
-	b.WriteString(`</span></div>`)
-	b.WriteString(`</div></div>`)
-	return b.String()
+// renderAccountRow draws one account.
+//
+// The counter columns are read from the plugin's own store: the host does not
+// track how often a credential served a request, and a re-authorisation keeps the
+// same handle so the numbers survive it.
+func renderAccountRow(e hostAuthEntry) string {
+	name := e.displayLabel()
+
+	status := `<span class="pill on">启用</span>`
+	switch {
+	case e.Disabled:
+		status = `<span class="pill off">已停用</span>`
+	case e.AuthRejected:
+		status = `<span class="pill off">需重新授权</span>`
+	}
+
+	record := stats.lookup(e.SecUserID)
+	if record == nil {
+		record = stats.lookup(name)
+	}
+	calls := int64(0)
+	lastUsed := "—"
+	if record != nil {
+		calls = record.CallCount
+		lastUsed = humanTime(record.LastUsedUnix)
+	}
+
+	action := `<button type="button" class="xs danger" data-call="toggleAccount"` +
+		` data-arg0="` + html.EscapeString(e.AuthIndex) + `"` +
+		` data-arg1="` + html.EscapeString(e.Path) + `"` +
+		` data-arg2="true">停用</button>`
+	if e.Disabled {
+		action = `<button type="button" class="xs" data-call="toggleAccount"` +
+			` data-arg0="` + html.EscapeString(e.AuthIndex) + `"` +
+			` data-arg1="` + html.EscapeString(e.Path) + `"` +
+			` data-arg2="false">启用</button>`
+	}
+
+	detail := ""
+	if record != nil && record.LastError != "" && !e.Disabled {
+		detail = `<div class="note bad" style="margin-top:3px">` + html.EscapeString(record.LastError) + `</div>`
+	}
+
+	// The counter row is the only thing this plugin owns for an account, so the
+	// removal action is offered only when there is one.
+	remove := ""
+	if record != nil {
+		remove = `<button type="button" class="xs ghost" data-call="removeAccount"` +
+			` data-arg0="` + html.EscapeString(firstNonEmpty(e.SecUserID, name)) + `"` +
+			` title="只清除本地统计，不会删除 CPA 的凭据文件">删除记录</button>`
+	}
+
+	return `<tr>` +
+		`<td><div class="acct-name"><strong title="` + html.EscapeString(name) + `">` +
+		html.EscapeString(name) + `</strong>` + detail + `</div></td>` +
+		`<td class="state">` + realmLabel(e.Realm) + `</td>` +
+		`<td class="state">` + status + `</td>` +
+		`<td class="num">` + fmtInt(calls) + `</td>` +
+		`<td class="note num">` + lastUsed + `</td>` +
+		`<td class="act">` + action + remove + `</td>` +
+		`</tr>`
 }
 
 // renderAuthorisationBox is the authorisation form.
@@ -72,16 +162,13 @@ func renderAuthorisationBox() string {
 	var b strings.Builder
 
 	b.WriteString(`<div class="box">`)
-	b.WriteString(`<header><h3>在面板里授权</h3>` +
-		`<span class="hint">不需要经过 CPA 的 OAuth 回调</span></header>`)
+	b.WriteString(`<header><h3>在面板里授权 <span class="hint">不需要经过 CPA 的 OAuth 回调</span></h3></header>`)
 	b.WriteString(`<div class="pad">`)
 
 	// ---- which upstream this credential belongs to ----
-	b.WriteString(`<div class="setting-group" style="padding:0 0 14px">`)
-	b.WriteString(`<div class="setting-label">`)
-	b.WriteString(`<span class="name">授权归属</span>`)
-	b.WriteString(`<span class="desc">决定用哪个站点校验这份 Cookie。选错会提示区域不可用。</span>`)
-	b.WriteString(`</div>`)
+	b.WriteString(`<div class="row" style="align-items:flex-start;gap:18px">`)
+	b.WriteString(`<div style="flex:1 1 240px;min-width:0">`)
+	b.WriteString(`<div class="note" style="margin-bottom:7px">授权归属</div>`)
 	b.WriteString(`<div class="seg" id="authRealmSeg">`)
 	for _, r := range allRealms {
 		cls := ""
@@ -93,40 +180,40 @@ func renderAuthorisationBox() string {
 			` data-call="pickAuthRealm" data-arg0="` + string(r) + `">` +
 			realmLabel(r) + `</button>`)
 	}
-	b.WriteString(`</div></div>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`<div class="note" style="margin-top:7px">决定用哪个站点校验这份 Cookie。选错会提示区域不可用。</div>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`<div style="flex:1 1 260px;min-width:0">`)
+	b.WriteString(`<div class="note" style="margin-bottom:7px">备注名（可选）</div>`)
+	b.WriteString(`<input type="text" id="authLabel" placeholder="例如：主账号">`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</div>`)
 
 	// ---- the paste target ----
-	b.WriteString(`<div class="setting-group" style="padding:0 0 12px">`)
-	b.WriteString(`<div class="setting-label">`)
-	b.WriteString(`<span class="name">Cookie</span>`)
-	b.WriteString(`<span class="desc">从浏览器开发者工具里的 <code>Cookie</code> 请求头复制整串值，` +
-		`直接粘贴即可 —— 不需要做任何转义。</span>`)
-	b.WriteString(`</div>`)
+	b.WriteString(`<div class="note" style="margin:16px 0 7px">Cookie</div>`)
 	b.WriteString(`<textarea id="authCookies" rows="5" spellcheck="false"` +
 		` placeholder="sessionid=...; flow_cur_user_sec_id=...; ..."` +
-		` style="width:100%;background:var(--bg-secondary);border:1px solid var(--border-primary);` +
+		` style="width:100%;background:var(--bg-quinary);border:1px solid var(--border-primary);` +
 		`border-radius:var(--radius-md);color:var(--text-primary);font-family:var(--mono);` +
 		`font-size:12px;padding:10px;outline:none;resize:vertical"></textarea>`)
-	b.WriteString(`<div class="row" style="margin-top:9px">`)
-	b.WriteString(`<input type="text" id="authLabel" placeholder="备注名（可选）" style="flex:1 1 200px">`)
-	b.WriteString(`<span class="btn-end">`)
+	b.WriteString(`<div class="row" style="margin-top:10px">`)
+	b.WriteString(`<span class="note">从开发者工具的 <code>Cookie</code> 请求头复制整串值，直接粘贴即可。</span>`)
+	b.WriteString(`<span class="grow"></span>`)
 	b.WriteString(`<button type="button" class="ghost" data-call="clearAuthForm">清空</button>`)
 	b.WriteString(`<button type="button" class="primary" id="authSubmit" data-call="submitAuthorize">校验并授权</button>`)
-	b.WriteString(`</span></div>`)
-	b.WriteString(`<div id="authResult" style="margin-top:10px"></div>`)
 	b.WriteString(`</div>`)
+	b.WriteString(`<div id="authResult" style="margin-top:10px"></div>`)
 
 	// ---- how to get the value ----
-	b.WriteString(`<div class="setting-group" style="padding:0">`)
-	b.WriteString(`<div class="setting-label"><span class="name">在哪里找到它</span></div>`)
+	b.WriteString(`<div class="group-head" style="margin:18px 0 8px"><h2>在哪里找到它</h2></div>`)
 	for i, r := range allRealms {
 		profile := profileFor(r)
 		if i > 0 {
-			b.WriteString(`<div style="height:12px"></div>`)
+			b.WriteString(`<div style="height:10px"></div>`)
 		}
 		b.WriteString(`<div class="row" style="margin-bottom:6px">`)
 		b.WriteString(`<a class="ghost" style="text-decoration:none;padding:5px 12px;border:1px solid var(--border-primary);` +
-			`border-radius:var(--radius-md);color:var(--text-secondary);font-size:13px"` +
+			`border-radius:var(--radius-md);color:var(--text-secondary);font-size:12.5px"` +
 			` href="` + htmlEscape(profile.Host+"/chat/") + `" target="_blank" rel="noopener">` +
 			realmLabel(r) + ` 登录页 ↗</a>`)
 		b.WriteString(`<span class="note">登录后 F12 → Network → 刷新 → 点击任意 ` +
@@ -136,64 +223,8 @@ func renderAuthorisationBox() string {
 	b.WriteString(`<div class="note" style="margin-top:8px">` +
 		`必须包含 <code>sessionid</code> 与 <code>flow_cur_user_sec_id</code>。` +
 		`缺少后者会被判定为会话无效 —— 插件会在校验时直接告诉你。</div>`)
-	b.WriteString(`</div>`)
 
 	b.WriteString(`</div></div>`)
-	return b.String()
-}
-
-// accountsTable renders the account list.
-//
-// It is a separate function because the client re-renders the same fragment after a
-// toggle; returning HTML rather than having the script rebuild it keeps the markup in
-// one place.
-func accountsTable(entries []hostAuthEntry) string {
-	if len(entries) == 0 {
-		return `<div class="empty">还没有账号。展开下面的「新增授权」按步骤添加。</div>`
-	}
-
-	var b strings.Builder
-	b.WriteString(`<table><thead><tr>`)
-	b.WriteString(`<th>账号</th><th>上游</th><th>状态</th><th>操作</th>`)
-	b.WriteString(`</tr></thead><tbody>`)
-
-	for _, e := range entries {
-		b.WriteString(`<tr>`)
-		b.WriteString(`<td>` + htmlEscape(e.displayLabel()) + `</td>`)
-		b.WriteString(`<td>` + realmLabel(e.Realm) + `</td>`)
-
-		b.WriteString(`<td>`)
-		if e.Disabled {
-			b.WriteString(`<span class="tag">已禁用</span>`)
-		} else {
-			b.WriteString(`<span class="tag intl">启用中</span>`)
-		}
-		if e.StatusMessage != "" {
-			b.WriteString(`<div class="note" style="margin-top:2px">` + htmlEscape(e.StatusMessage) + `</div>`)
-		}
-		b.WriteString(`</td>`)
-
-		b.WriteString(`<td>`)
-		label := "禁用"
-		if e.Disabled {
-			label = "启用"
-		}
-		b.WriteString(`<button type="button" class="ghost"` +
-			` data-call="toggleAccount" data-arg0="` + htmlEscape(e.AuthIndex) + `"` +
-			` data-arg1="` + htmlEscape(e.Path) + `"` +
-			` data-arg2="` + fmt.Sprintf("%t", !e.Disabled) + `">` + label + `</button>`)
-		b.WriteString(`</td>`)
-		b.WriteString(`</tr>`)
-
-		// The auth index and file path are what the toggle sends back, so showing
-		// them makes a mis-toggle diagnosable from a screenshot.
-		if e.Path != "" {
-			b.WriteString(`<tr><td colspan="4" class="note" style="padding-top:0;border-top:0">` +
-				`<code>` + htmlEscape(e.Path) + `</code></td></tr>`)
-		}
-	}
-
-	b.WriteString(`</tbody></table>`)
 	return b.String()
 }
 
@@ -205,4 +236,24 @@ func (e hostAuthEntry) displayLabel() string {
 		}
 	}
 	return "未命名账号"
+}
+
+// fmtInt renders a counter without importing strconv into the page code.
+func fmtInt(v int64) string {
+	if v == 0 {
+		return "0"
+	}
+	negative := v < 0
+	if negative {
+		v = -v
+	}
+	var digits []byte
+	for v > 0 {
+		digits = append([]byte{byte('0' + v%10)}, digits...)
+		v /= 10
+	}
+	if negative {
+		return "-" + string(digits)
+	}
+	return string(digits)
 }

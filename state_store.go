@@ -35,6 +35,9 @@ type panelState struct {
 	MediaPollSeconds      int    `json:"media_poll_seconds,omitempty"`
 	ReplyPollIntervalMS   int    `json:"reply_poll_interval_ms,omitempty"`
 	Debug                 *bool  `json:"debug,omitempty"`
+	// Routing is stored as its own sub-document because the panel sets the whole
+	// strategy at once; a partial patch of one field would be ambiguous.
+	Routing *routingSettings `json:"routing,omitempty"`
 }
 
 // pluginStateDir returns the directory used for the state file.
@@ -97,6 +100,9 @@ func overlayPanelState(s *pluginSettings) {
 	if p.ReplyPollIntervalMS > 0 {
 		s.ReplyPollIntervalMS = p.ReplyPollIntervalMS
 	}
+	if p.Routing != nil && p.Routing.Strategy != "" {
+		s.Routing.Strategy = normalizeStrategy(p.Routing.Strategy)
+	}
 }
 
 // mergePanelState updates the overlay with just the keys a patch contained.
@@ -139,6 +145,12 @@ func mergePanelState(patch map[string]json.RawMessage) error {
 		case "reply_poll_interval_ms":
 			if n, errNum := positiveInt(raw); errNum == nil {
 				current.ReplyPollIntervalMS = n
+			}
+		case "routing":
+			var v routingSettings
+			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal == nil && v.Strategy != "" {
+				v.Strategy = normalizeStrategy(v.Strategy)
+				current.Routing = &v
 			}
 		default:
 			// An unknown key is ignored: the page and the plugin can be deployed

@@ -15,6 +15,8 @@ type statusSnapshot struct {
 	Realms       []realmStatus    `json:"realms"`
 	Models       []map[string]any `json:"models"`
 	Settings     map[string]any   `json:"settings"`
+	Routing      map[string]any   `json:"routing"`
+	Accounts     int              `json:"accounts"`
 }
 
 type realmStatus struct {
@@ -27,11 +29,18 @@ type realmStatus struct {
 	ModelCount  int    `json:"model_count"`
 }
 
-// statusJSON renders the status document.
-//
-// It is the machine-readable counterpart of the panel: automation and the browser
-// both read it, so the shape is stable and the model list is not truncated.
+// statusJSON renders the status document as bytes.
 func statusJSON() []byte {
+	raw, _ := json.MarshalIndent(statusDocument(), "", "  ")
+	return raw
+}
+
+// statusDocument builds the status document.
+//
+// The handler takes the value rather than the encoded bytes: management responses
+// carry a []byte body, and marshalling bytes into a JSON field base64-encodes them,
+// which would hand the browser an opaque string instead of the document.
+func statusDocument() statusSnapshot {
 	settings := state.settings.get()
 	out := statusSnapshot{
 		Plugin:       pluginName,
@@ -39,6 +48,8 @@ func statusJSON() []byte {
 		DefaultRealm: string(settings.RealmDefault),
 		Settings:     settingsJSON(settings),
 		Models:       modelDisplayList(),
+		Routing:      routingStatusJSON(),
+		Accounts:     len(accounts.get()),
 	}
 	for _, r := range allRealms {
 		p := profileFor(r)
@@ -52,15 +63,15 @@ func statusJSON() []byte {
 			ModelCount:  len(catalogueFor(r)),
 		})
 	}
-	raw, _ := json.MarshalIndent(out, "", "  ")
-	return raw
+	return out
 }
 
 // htmlEscape escapes the characters that matter inside element content and inside
 // a double-quoted attribute.
 //
-// Every value interpolated into the page passes through here: model ids and
-// descriptions come from configuration, so they are not trusted markup.
+// Every value interpolated into the page passes through here: model ids,
+// descriptions and status messages all originate outside this package, so none of
+// them is trusted markup.
 func htmlEscape(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

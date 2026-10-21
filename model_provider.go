@@ -37,6 +37,35 @@ type modelAlias struct {
 	UpstreamModel string
 	// Skill is the upstream capability to activate, or 0 for plain chat.
 	Skill int
+	// Kind is the OpenAI surface this alias answers on: "chat", "image" or
+	// "video". It decides which endpoint may route to it.
+	Kind string
+	// DeepThink asks the upstream to reason before answering. It is a flag on the
+	// request rather than a skill, so the two are modelled separately.
+	DeepThink bool
+}
+
+// The OpenAI surfaces this plugin answers on.
+//
+// A model is bound to exactly one: CPA routes /v1/images/generations only to a
+// model registered with Type "openai-image", and the chat endpoint only to a
+// chat model. Registering the same alias everywhere would let a client ask the
+// chat endpoint for a picture and get a text description instead.
+const (
+	kindChat  = "chat"
+	kindImage = "image"
+	kindVideo = "video"
+)
+
+// kindForModel returns the surface an alias belongs to, defaulting to chat.
+func kindForModel(requested string) string {
+	name, _ := stripModelPrefix(normalizeModelName(requested))
+	for _, alias := range capabilityAliases {
+		if strings.EqualFold(name, alias.ID) {
+			return alias.Kind
+		}
+	}
+	return kindChat
 }
 
 // skillForModel returns the upstream skill a model name activates.
@@ -50,6 +79,17 @@ func skillForModel(requested string) int {
 	return 0
 }
 
+// deepThinkForModel reports whether a model name asks for deep thinking.
+func deepThinkForModel(requested string) bool {
+	name, _ := stripModelPrefix(normalizeModelName(requested))
+	for _, alias := range capabilityAliases {
+		if strings.EqualFold(name, alias.ID) {
+			return alias.DeepThink
+		}
+	}
+	return false
+}
+
 // capabilityAliases are the stable, realm-independent model names.
 //
 // They describe behaviours, not vendor SKUs, because the vendor renames its
@@ -61,12 +101,15 @@ var capabilityAliases = []modelAlias{
 		DisplayName:   "默认助手",
 		Description:   "账号默认的对话模型，等同于网页端直接提问。",
 		UpstreamModel: "",
+		Kind:          kindChat,
 	},
 	{
 		ID:            "pro",
 		DisplayName:   "深度思考",
 		Description:   "开启深度思考的对话模型，回复更慢但推理更充分。",
 		UpstreamModel: "",
+		DeepThink:     true,
+		Kind:          kindChat,
 	},
 	{
 		ID:            "image",
@@ -75,6 +118,7 @@ var capabilityAliases = []modelAlias{
 		UpstreamModel: "",
 		// Skill is the upstream capability to activate for this alias.
 		Skill: skillImageGen,
+		Kind:  kindImage,
 	},
 	{
 		ID:            "video",
@@ -82,17 +126,35 @@ var capabilityAliases = []modelAlias{
 		Description:   "生成视频。视频地址以文本与 media 扩展字段返回。",
 		UpstreamModel: "",
 		Skill:         skillVideoGen,
+		Kind:          kindVideo,
 	},
 }
 
-// Upstream skill identifiers, from the client's skill table
-// (/samantha/skill/recommend). They are what makes an image request actually
-// produce a picture: sending "画一只猫" as plain text makes the model *describe*
-// the picture it would draw rather than draw it.
+// Upstream skill identifiers, from the client's ChatAbilityType enum
+// (com/larus/im/bean/message/ChatAbilityType, doubao 15.4.0). They are what makes
+// an image request actually produce a picture: sending "画一只猫" as plain text
+// makes the model *describe* the picture it would draw rather than draw it.
+//
+// The values come from the enum's own constructor arguments, not from its ordinal:
+// SKILL_IMAGE_GENERATION is 2001 and SKILL_VIDEO_GENERATION is 2002, which is a
+// different numbering from the pre-15.x client. An ordinal would be silently wrong
+// here — it would name a different skill and produce text instead of media.
 const (
-	skillImageGen = 3
-	skillVideoGen = 5
+	skillImageGen = 2001
+	skillVideoGen = 2002
 )
+
+// registryTypeFor maps an alias to the model Type CPA stores in its registry.
+//
+// The image type is not cosmetic: OpenAI's /v1/images/generations accepts a model
+// only when the registry reports Type "openai-image", so an alias registered
+// without it is rejected by the endpoint before the executor is ever called.
+func registryTypeFor(kind string) string {
+	if kind == kindImage {
+		return "openai-image"
+	}
+	return ""
+}
 
 // catalogModel is the wire shape for /v1/models.
 type catalogModel struct {
@@ -100,6 +162,9 @@ type catalogModel struct {
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	OwnedBy string `json:"owned_by"`
+	// Type tells CPA which surface may route to this model. "openai-image" is
+	// what admits it to /v1/images/generations; empty means a chat model.
+	Type string `json:"type,omitempty"`
 	// Root/Description are extensions the CPA catalogue carries through when
 	// present; clients that do not know them ignore them.
 	Root        string `json:"root,omitempty"`
@@ -116,6 +181,7 @@ func catalogueFor(r realm) []catalogModel {
 			Object:      "model",
 			Created:     referenceCreated,
 			OwnedBy:     string(r),
+			Type:        registryTypeFor(alias.Kind),
 			Description: fmt.Sprintf("%s · %s", profile.DisplayName, alias.Description),
 		})
 	}
@@ -184,6 +250,7 @@ func buildCatalogue() []catalogModel {
 			Object:      "model",
 			Created:     referenceCreated,
 			OwnedBy:     string(settings.RealmDefault),
+			Type:        registryTypeFor(alias.Kind),
 			Description: fmt.Sprintf("%s（默认上游：%s）", alias.Description, profileFor(settings.RealmDefault).DisplayName),
 		})
 	}

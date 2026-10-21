@@ -2,22 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 // The panel's HTTP surface.
-//
-// One handler covers the page and the JSON it talks to, because they share a prefix
-// and the same (unauthenticated) resource context; splitting them would add
-// indirection without adding safety. The page is served from
-// /v0/resource/plugins/doubao, which CPA exposes without the management key, so the
-// panel works in the host's iframe without the user pasting a key anywhere.
-
-// managementRegistration declares the panel's routes.
 //
 // Two route kinds, and the distinction matters:
 //
@@ -28,8 +22,10 @@ import (
 //	           the page writes goes here.
 //
 // A write on a resource path silently does nothing: ServeResourceHTTP returns
-// false for any method but GET, and the request then 404s. That is why the
-// settings endpoint is registered under Routes.
+// false for any method but GET, and the request then 404s. That is why every
+// mutation is registered under Routes.
+
+// managementRegistration declares the panel's routes.
 func managementRegistration() managementRegistrationResponse {
 	return managementRegistrationResponse{
 		Resources: []pluginapi.ResourceRoute{
@@ -40,58 +36,25 @@ func managementRegistration() managementRegistrationResponse {
 				// "declared invalid resource route /" and dropped — the menu
 				// entry then never appears.
 				Path:        "panel",
-				Menu:        "豆包 / Dola",
-				Description: "上游状态、模型列表与插件设置，全部集中在这一页。",
+				Menu:        pluginDisplayName,
+				Description: "账号、统计、能力说明与插件设置，全部集中在这一页。",
 			},
 		},
 		Routes: []pluginapi.ManagementRoute{
-			{
-				Method:      http.MethodGet,
-				Path:        "/doubao/status",
-				Description: "插件状态 JSON：上游、模型与当前设置。",
-			},
-			{
-				Method:      http.MethodGet,
-				Path:        "/doubao/accounts",
-				Description: "已授权账号列表，含所属上游与启用状态。",
-			},
-			{
-				Method:      http.MethodPost,
-				Path:        "/doubao/account/toggle",
-				Description: "启用或禁用某个账号。",
-			},
-			{
-				// The panel's own authorisation path. CPA's OAuth callback box wants
-				// a callback URL and rejects a bare cookie with "state is required",
-				// which is not something a user can work around, so the plugin takes
-				// the credential here instead and writes the auth record itself.
-				Method:      http.MethodPost,
-				Path:        "/doubao/authorize",
-				Description: "用粘贴的 Cookie 授权一个账号（国内版或国际版）。",
-			},
-			{
-				Method:      http.MethodPost,
-				Path:        "/doubao/realm/switch",
-				Description: "切换默认上游，并自动隔离另一侧的账号。",
-			},
-			{
-				Method:      http.MethodGet,
-				Path:        "/doubao/settings",
-				Description: "当前设置 JSON。",
-			},
-			{
-				Method:      http.MethodPost,
-				Path:        "/doubao/settings",
-				Description: "更新设置（模型可见范围、超时与轮询、日志）。",
-			},
-			{
-				// The page is also mounted on the management path so a browser can
-				// reach it directly, and so every call the page makes shares one
-				// prefix and one credential.
-				Method:      http.MethodGet,
-				Path:        "/doubao/panel",
-				Description: "豆包 / Dola 控制台页面。",
-			},
+			{Method: http.MethodGet, Path: "/" + pluginName + "/status", Description: "插件状态：上游、模型与当前设置。"},
+			{Method: http.MethodGet, Path: "/" + pluginName + "/accounts", Description: "已授权账号，含上游、启用状态与调用次数。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/account/toggle", Description: "启用或禁用某个账号。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/account/remove", Description: "移除某个账号的本地记录。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/authorize", Description: "用粘贴的 Cookie 授权一个账号。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/realm/switch", Description: "切换默认上游并隔离另一侧账号。"},
+			{Method: http.MethodGet, Path: "/" + pluginName + "/calls", Description: "最近的调用记录。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/calls/clear", Description: "清空调用记录。"},
+			{Method: http.MethodGet, Path: "/" + pluginName + "/routing/status", Description: "当前路由策略与轮巡位置。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/routing/config", Description: "设置路由策略。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/routing/reset", Description: "重置轮巡位置。"},
+			{Method: http.MethodGet, Path: "/" + pluginName + "/settings", Description: "当前设置 JSON。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/settings", Description: "更新设置。"},
+			{Method: http.MethodGet, Path: "/" + pluginName + "/panel", Description: "豆包 / Dola 控制台页面。"},
 		},
 	}
 }
@@ -111,10 +74,6 @@ func handleManagement(request []byte) ([]byte, error) {
 }
 
 // handlePanelRoute routes one panel request.
-//
-// The paths are the tails CPA resolves after stripping the plugin prefix, so the
-// resource page and the management API both arrive here and are told apart by
-// their tail alone.
 func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementResponse {
 	path := normalisePanelPath(req.Path)
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
@@ -124,19 +83,54 @@ func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementRespo
 		return htmlResponse(renderMainPage())
 
 	case "/status":
-		return jsonResponse(statusJSON())
+		return jsonResponse(statusDocument())
 
 	case "/accounts":
-		return jsonResponse(map[string]any{"accounts": accountsJSON(accounts.get())})
+		return jsonResponse(accountsPayload())
 
 	case "/account/toggle":
 		return toggleAccount(req.Body)
+
+	case "/account/remove":
+		return removeAccount(req.Body)
 
 	case "/authorize":
 		return authorizeAccount(req.Body)
 
 	case "/realm/switch":
 		return switchRealm(req.Body)
+
+	case "/calls":
+		return jsonResponse(map[string]any{"calls": state.logs.recent(200)})
+
+	case "/calls/clear":
+		state.logs.clear()
+		return jsonResponse(map[string]any{"ok": true})
+
+	case "/routing/status":
+		result := routingStatusJSON()
+		result["hint"] = routingNextHint()
+		return jsonResponse(result)
+
+	case "/routing/config":
+		var body struct {
+			Strategy string `json:"strategy"`
+			Value    string `json:"value"`
+		}
+		if len(req.Body) > 0 {
+			_ = json.Unmarshal(req.Body, &body)
+		}
+		strategy := firstNonEmpty(body.Strategy, body.Value)
+		if strings.TrimSpace(strategy) == "" {
+			return errorJSON(http.StatusBadRequest, "缺少 strategy")
+		}
+		result := applyRoutingConfig(strategy)
+		result["hint"] = routingNextHint()
+		return jsonResponse(result)
+
+	case "/routing/reset":
+		resetRotation()
+		return jsonResponse(map[string]any{"ok": true})
 
 	case "/settings":
 		if method == http.MethodPost || method == http.MethodPut {
@@ -151,32 +145,75 @@ func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementRespo
 	}
 }
 
-// accountsJSON renders the account list for the panel.
-func accountsJSON(entries []hostAuthEntry) []map[string]any {
-	out := make([]map[string]any, 0, len(entries))
+// accountsPayload renders the account table.
+//
+// The host's auth list is the source of truth for what exists; the plugin's
+// counters supply the usage numbers. Joining them here means the panel shows one
+// row per credential even when that credential has never served a request.
+func accountsPayload() map[string]any {
+	entries := accounts.get()
+	rows := make([]map[string]any, 0, len(entries))
+	enabled, blocked := 0, 0
+
 	for _, e := range entries {
-		item := map[string]any{
+		row := map[string]any{
 			"auth_index": e.AuthIndex,
 			"id":         e.ID,
 			"name":       e.Name,
-			"label":      e.Label,
+			"path":       e.Path,
+			"label":      e.displayLabel(),
 			"realm":      string(e.Realm),
 			"realm_name": profileFor(e.Realm).DisplayName,
 			"disabled":   e.Disabled,
 			"status":     e.Status,
 		}
 		if e.StatusMessage != "" {
-			item["status_message"] = e.StatusMessage
+			row["status_message"] = e.StatusMessage
 		}
 		if e.SecUserID != "" {
-			item["sec_user_id"] = e.SecUserID
+			row["sec_user_id"] = e.SecUserID
 		}
-		if !e.ExpiresAt.IsZero() {
-			item["expires_at"] = e.ExpiresAt.Format("2006-01-02")
+
+		record := stats.lookup(e.SecUserID)
+		if record == nil {
+			record = stats.lookup(e.displayLabel())
 		}
-		out = append(out, item)
+		if record != nil {
+			row["calls"] = record.CallCount
+			if record.SuccessCount > 0 {
+				row["success"] = record.SuccessCount
+			}
+			if record.FailureCount > 0 {
+				row["failures"] = record.FailureCount
+			}
+			if record.LastError != "" {
+				row["last_error"] = record.LastError
+			}
+			if record.AuthRejected {
+				row["auth_rejected"] = true
+			}
+			if record.LastUsedUnix > 0 {
+				row["last_used"] = humanClock(record.LastUsedUnix)
+			}
+		}
+
+		switch {
+		case e.Disabled:
+			blocked++
+		case e.AuthRejected:
+			blocked++
+		default:
+			enabled++
+		}
+		rows = append(rows, row)
 	}
-	return out
+
+	return map[string]any{
+		"accounts": rows,
+		"total":    len(rows),
+		"enabled":  enabled,
+		"disabled": blocked,
+	}
 }
 
 // toggleAccount enables or disables one credential.
@@ -184,6 +221,7 @@ func toggleAccount(body []byte) pluginapi.ManagementResponse {
 	var req struct {
 		AuthIndex string `json:"auth_index"`
 		Path      string `json:"path"`
+		Key       string `json:"key"`
 		Disabled  *bool  `json:"disabled"`
 	}
 	if errUnmarshal := json.Unmarshal(body, &req); errUnmarshal != nil {
@@ -191,10 +229,12 @@ func toggleAccount(body []byte) pluginapi.ManagementResponse {
 	}
 
 	var target *hostAuthEntry
-	for i := range accounts.get() {
-		e := accounts.get()[i]
+	entries := accounts.get()
+	for i := range entries {
+		e := entries[i]
 		if (req.AuthIndex != "" && e.AuthIndex == req.AuthIndex) ||
-			(req.Path != "" && e.Path == req.Path) {
+			(req.Path != "" && e.Path == req.Path) ||
+			(req.Key != "" && (e.SecUserID == req.Key || e.displayLabel() == req.Key)) {
 			target = &e
 			break
 		}
@@ -214,8 +254,8 @@ func toggleAccount(body []byte) pluginapi.ManagementResponse {
 	}
 	accounts.invalidate()
 	return jsonResponse(map[string]any{
-		"accounts": accountsJSON(accounts.get()),
-		"changed":  target.Label,
+		"accounts": accountsPayload()["accounts"],
+		"changed":  target.displayLabel(),
 		"disabled": disabled,
 	})
 }
@@ -265,7 +305,7 @@ func switchRealm(body []byte) pluginapi.ManagementResponse {
 		"isolate_error":  isolateErr,
 		"persisted":      persisted,
 		"error":          persistErr,
-		"accounts":       accountsJSON(accounts.get()),
+		"accounts":       accountsPayload()["accounts"],
 		"settings":       settingsJSON(next),
 	})
 }
@@ -282,6 +322,7 @@ func normalisePanelPath(raw string) string {
 	for _, prefix := range []string{
 		"/v0/resource/plugins/" + pluginName,
 		"/v0/management/" + pluginName,
+		"/v0/management",
 	} {
 		if strings.HasPrefix(p, prefix) {
 			p = strings.TrimPrefix(p, prefix)
@@ -327,6 +368,7 @@ func settingsJSON(s pluginSettings) map[string]any {
 		"media_poll_seconds":      s.MediaPollSeconds,
 		"reply_poll_interval_ms":  s.ReplyPollIntervalMS,
 		"debug":                   s.Debug,
+		"routing":                 normalizeStrategy(s.Routing.Strategy),
 	}
 }
 
@@ -374,53 +416,60 @@ func applySettingsPatch(s *pluginSettings, patch map[string]json.RawMessage) err
 		case "realm_default":
 			var v string
 			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
-				return fmt.Errorf("realm_default 格式错误")
+				return errField("realm_default")
 			}
 			r := normalizeRealm(v)
 			if r == "" {
-				return fmt.Errorf("未知上游 %q，可选 doubao 或 dola", v)
+				return errUnknownRealm(v)
 			}
 			s.RealmDefault = r
 
 		case "expose_models":
 			var v bool
 			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
-				return fmt.Errorf("expose_models 格式错误")
+				return errField("expose_models")
 			}
 			s.ExposeModels = boolPtr(v)
 
 		case "debug":
 			var v bool
 			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
-				return fmt.Errorf("debug 格式错误")
+				return errField("debug")
 			}
 			s.Debug = v
+
+		case "routing":
+			var v routingSettings
+			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil || strings.TrimSpace(v.Strategy) == "" {
+				return errField("routing")
+			}
+			s.Routing.Strategy = normalizeStrategy(v.Strategy)
 
 		case "request_timeout_seconds":
 			n, errNum := positiveInt(raw)
 			if errNum != nil {
-				return fmt.Errorf("request_timeout_seconds %w", errNum)
+				return errNumField("request_timeout_seconds", errNum)
 			}
 			s.RequestTimeoutSeconds = n
 
 		case "reply_poll_seconds":
 			n, errNum := positiveInt(raw)
 			if errNum != nil {
-				return fmt.Errorf("reply_poll_seconds %w", errNum)
+				return errNumField("reply_poll_seconds", errNum)
 			}
 			s.ReplyPollSeconds = n
 
 		case "media_poll_seconds":
 			n, errNum := positiveInt(raw)
 			if errNum != nil {
-				return fmt.Errorf("media_poll_seconds %w", errNum)
+				return errNumField("media_poll_seconds", errNum)
 			}
 			s.MediaPollSeconds = n
 
 		case "reply_poll_interval_ms":
 			n, errNum := positiveInt(raw)
 			if errNum != nil {
-				return fmt.Errorf("reply_poll_interval_ms %w", errNum)
+				return errNumField("reply_poll_interval_ms", errNum)
 			}
 			s.ReplyPollIntervalMS = n
 
@@ -438,10 +487,10 @@ func applySettingsPatch(s *pluginSettings, patch map[string]json.RawMessage) err
 func positiveInt(raw json.RawMessage) (int, error) {
 	var v int
 	if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
-		return 0, fmt.Errorf("必须是整数")
+		return 0, errInvalidInteger
 	}
 	if v <= 0 {
-		return 0, fmt.Errorf("必须是正整数")
+		return 0, errNotPositive
 	}
 	return v, nil
 }
@@ -463,4 +512,68 @@ func errorJSON(status int, message string) pluginapi.ManagementResponse {
 // a value the operator sets by hand in config.yaml keeps applying.
 func persistSettings(patch map[string]json.RawMessage) error {
 	return mergePanelState(patch)
+}
+
+// The validation errors are values rather than formatted strings so the message
+// each one produces stays in one place: the panel shows them verbatim, and the
+// field name is the only thing that varies.
+var (
+	errInvalidInteger = errors.New("必须是整数")
+	errNotPositive    = errors.New("必须是正整数")
+)
+
+func errField(name string) error {
+	return fmt.Errorf("%s 格式错误", name)
+}
+
+func errUnknownRealm(value string) error {
+	return fmt.Errorf("未知上游 %q，可选 doubao 或 dola", value)
+}
+
+func errNumField(name string, err error) error {
+	return fmt.Errorf("%s %w", name, err)
+}
+
+// humanClock renders a Unix timestamp for the tables, with a dash for "never".
+func humanClock(sec int64) string {
+	if sec <= 0 {
+		return "—"
+	}
+	return time.Unix(sec, 0).Format("01-02 15:04")
+}
+
+// removeAccount drops the plugin's local record for an account.
+//
+// The host owns the credential file and offers no delete callback, so this does
+// not touch it: the row disappears from the counters, and if the credential is
+// still present in the auth directory it reappears on the next refresh. That is
+// deliberate — deleting a file the host is watching would depend on the host's
+// reload timing, and the panel would show a state CPA disagrees with.
+func removeAccount(body []byte) pluginapi.ManagementResponse {
+	var req struct {
+		AuthIndex string `json:"auth_index"`
+		Key       string `json:"key"`
+		SecUserID string `json:"sec_user_id"`
+	}
+	if errUnmarshal := json.Unmarshal(body, &req); errUnmarshal != nil {
+		return errorJSON(http.StatusBadRequest, "无法解析请求："+errUnmarshal.Error())
+	}
+
+	key := firstNonEmpty(req.Key, req.SecUserID)
+	if key == "" && req.AuthIndex != "" {
+		for _, e := range accounts.get() {
+			if e.AuthIndex == req.AuthIndex {
+				key = firstNonEmpty(e.SecUserID, e.displayLabel())
+				break
+			}
+		}
+	}
+	if key == "" {
+		return errorJSON(http.StatusBadRequest, "缺少 key")
+	}
+	if !stats.forget(key) {
+		return errorJSON(http.StatusNotFound, "没有该账号的本地记录")
+	}
+	accounts.invalidate()
+	return jsonResponse(map[string]any{"ok": true, "key": key})
 }

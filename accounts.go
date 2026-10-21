@@ -38,6 +38,9 @@ type hostAuthEntry struct {
 	StatusMessage string
 	SecUserID     string
 	ExpiresAt     time.Time
+	// AuthRejected is the advisory flag from the plugin's counters: the upstream
+	// refused this session outright. It is cleared by the next successful call.
+	AuthRejected bool
 }
 
 // accountSnapshot caches the host listing briefly.
@@ -107,6 +110,9 @@ func loadAccounts() []hostAuthEntry {
 		// each entry is resolved once. Doing it here rather than per request keeps
 		// the cost to one extra call per credential per refresh.
 		enrichAuthEntry(&entry)
+		if record := stats.lookup(entry.SecUserID); record != nil {
+			entry.AuthRejected = record.AuthRejected
+		}
 		out = append(out, entry)
 	}
 
@@ -198,7 +204,6 @@ func inferRealmFromName(name string) realm {
 }
 
 // setAuthDisabled enables or disables one credential.
-//
 // The write goes to the credential file, which is what CPA reads when it builds its
 // candidate list — a flag held only in the plugin would not stop CPA from routing to
 // the account.

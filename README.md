@@ -12,10 +12,14 @@
 |---|---|---|
 | 文本对话 | ✅ 可用 | `/v1/chat/completions`，支持流式 |
 | 深度思考 | ✅ 可用 | 思维链以 `reasoning_content` 返回 |
-| **图片生成** | ✅ 可用 | `doubao/image`，输出 OpenAI 多模态 `image_url` |
-| **视频生成** | ✅ 可用 | `doubao/video`，URL 以文本 + `media` 扩展返回 |
+| **图片生成** | ✅ 可用 | `/v1/images/generations`（`doubao/image`），也支持在 `/v1/chat/completions` 返回多模态 `image_url` |
+| **视频生成** | ✅ 可用 | `/v1/videos`（`doubao/video`），沿用返回里也带 URL 与 `media` 扩展 |
 | 双上游 | ✅ 可用 | 同一插件支持豆包与 Dola 两套账号 |
 | 会话列表 | ✅ 可用 | 自动获取会话，无需手工配置 |
+| 控制台面板 | ✅ 可用 | 账号 / 统计 / 说明 / 设置四页，与 Tinker 插件同一套界面 |
+| 多账号轮换 | ✅ 可用 | 轮巡、用满再换、随机、按用量四种路由策略 |
+| 调用统计 | ✅ 可用 | 每个账号的调用 / 成功 / 失败次数与最近的调用记录 |
+| 账号启停 | ✅ 可用 | 一键写入 CPA 的 auth 文件，与 CPA 面板状态一致 |
 
 ---
 
@@ -51,7 +55,7 @@ plugins:
 
 ### 3. 授权
 
-在 CPA 的插件面板中授权。需要粘贴**登录后的完整 Cookie**：
+打开 CPA 管理面板 → 插件 → **豆包 / Dola**，在「账号」页底部的「在面板里授权」粘贴 Cookie。需要粘贴**登录后的完整 Cookie**：
 
 1. 浏览器打开 `www.doubao.com`（国内版）或 `www.dola.com`（国际版）并登录
 2. 按 `F12` → **Network** → 刷新页面

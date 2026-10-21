@@ -1,20 +1,21 @@
 package main
 
-// The panel's stylesheet and the script that drives it.
+// The panel's stylesheet.
 //
-// The token values mirror CPAMC's themes.scss so the panel sits inside the host's
-// management UI rather than beside it. The theme follows the host: the host writes
-// data-theme="dark" or "white" on its own root and removes the attribute when the
-// user picked "follow system", in which case the media query decides. Reading it
-// back is what keeps an explicit choice in sync.
+// The tokens, spacing and component shapes are the same as the Tinker plugin's, so
+// the two panels read as one product inside CPA rather than as two hand-rolled
+// apps. The theme follows the host: CPA writes data-theme="dark" or "white" on its
+// own root and removes the attribute when the operator picked "follow system", in
+// which case the media query decides.
 
 const uiCSS = `
+/* ======================= tokens ======================= */
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg-secondary: #151412;
-  --bg-primary: #1d1b18;
-  --bg-tertiary: #262320;
+  --bg-secondary: #151412;   /* page background */
+  --bg-primary: #1d1b18;     /* card surface */
+  --bg-tertiary: #262320;    /* hover / secondary */
   --bg-hover: #2e2a26;
   --bg-quinary: #191714;
 
@@ -27,6 +28,8 @@ const uiCSS = `
   --border-primary: #4a453f;
   --border-hover: #5a544d;
 
+  /* Action colour: a neutral grey, not a brand hue. Buttons in this host are quiet;
+     the colour that carries meaning is the status one. */
   --primary-color: #8b8680;
   --primary-hover: #9a948e;
   --primary-active: #a6a099;
@@ -35,12 +38,29 @@ const uiCSS = `
   --success-color: #10b981;
   --warning-color: #c65746;
   --error-color: #c65746;
-  --info-color: #5b8def;
+  --quota-medium-color: #ffd862;
 
   --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3);
   --shadow-lg: 0 14px 30px rgba(0, 0, 0, 0.4);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-card: 14px;
+  --radius-full: 9999px;
+
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
+          "Microsoft YaHei", "Helvetica Neue", sans-serif;
 }
 
+/* Explicit light choice from the host's theme switcher: pure white throughout. */
 :root[data-theme="white"],
 :root[data-theme="light"] {
   color-scheme: light;
@@ -67,727 +87,366 @@ const uiCSS = `
   --success-color: #10b981;
   --warning-color: #c65746;
   --error-color: #c65746;
-  --info-color: #3b82f6;
+  --quota-medium-color: #e0aa14;
 
   --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.08);
   --shadow-lg: 0 10px 18px -3px rgb(0 0 0 / 0.1);
 }
 
-/* "follow system": no attribute on the root, so the media query decides. */
+/* "Follow system": the host removes data-theme, so the OS preference decides.
+   Paper-toned, matching the host's own :root light palette rather than #fff. */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     color-scheme: light;
-    --bg-secondary: #ffffff;
-    --bg-primary: #ffffff;
-    --bg-tertiary: #f6f6f6;
-    --bg-hover: #f0f0f0;
-    --bg-quinary: #ffffff;
+    --bg-secondary: #faf9f5;
+    --bg-primary: #f0eee8;
+    --bg-tertiary: #e9e6df;
+    --bg-hover: #e2dfd7;
+    --bg-quinary: #f6f4ee;
     --text-primary: #2d2a26;
     --text-secondary: #6d6760;
     --text-tertiary: #a29c95;
     --text-quaternary: #c0bab3;
-    --border-color: #e5e5e5;
-    --border-primary: #d9d9d9;
-    --border-hover: #cccccc;
+    --border-color: #e3e1db;
+    --border-primary: #d5d2cb;
+    --border-hover: #cecac4;
+    --primary-hover: #7f7a74;
+    --primary-active: #726d67;
+    --quota-medium-color: #e0aa14;
     --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.08);
     --shadow-lg: 0 10px 18px -3px rgb(0 0 0 / 0.1);
   }
 }
 
-:root {
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-card: 14px;
-  --radius-full: 9999px;
-
-  --space-xs: 4px;
-  --space-sm: 8px;
-  --space-md: 16px;
-  --space-lg: 24px;
-  --space-xl: 32px;
-
-  --dur-fast: 150ms;
-  --ease: ease;
-
-  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
-          "Microsoft YaHei", "Helvetica Neue", sans-serif;
-}
-
-* { box-sizing: border-box; }
-
+* { box-sizing: border-box; margin: 0; padding: 0; }
+/* [hidden] must win over any display rule: the panel switches pages with this
+   attribute, and a stray display:flex elsewhere would keep a page visible. */
+[hidden] { display: none !important; }
+html, body { background: var(--bg-secondary); }
 body {
-  margin: 0;
-  padding: var(--space-lg);
-  background: var(--bg-secondary);
   color: var(--text-primary);
-  font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.6;
+  font: 14px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+a { color: var(--primary-active); text-decoration: none; }
+code, .mono { font-family: var(--mono); font-size: .93em; }
+::selection { background: color-mix(in srgb, var(--primary-color) 30%, transparent); }
+:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ======================= shell ======================= */
+/* One surface throughout: header, tabs and page frame all sit on the page
+   background, so the panel reads as a single sheet rather than stacked panels. */
+.shell { display: block; min-height: 100vh; background: var(--bg-secondary); }
+
+.page-header { padding: 30px 22px 16px; max-width: 1280px; margin: 0 auto; }
+.page-header h1 {
+  font-size: 20px; font-weight: 650; letter-spacing: -.02em;
+  color: var(--text-primary);
+}
+.page-header .desc {
+  color: var(--text-tertiary); font-size: 13px; margin-top: 6px;
+  max-width: 62ch; line-height: 1.6;
 }
 
-.shell { max-width: 1080px; margin: 0 auto; }
-
-/* ---- header ---- */
-.page-header { margin-bottom: var(--space-lg); }
-.page-header h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
-.page-header .desc { margin: 0; color: var(--text-tertiary); font-size: 13px; }
-
-/* ---- tabs ---- */
+/* ======================= tabs ======================= */
 .tabbar {
-  display: flex;
-  gap: var(--space-xs);
-  margin-bottom: var(--space-lg);
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: stretch; gap: 2px;
+  padding: 0 22px;
+  max-width: 1280px; margin: 0 auto; width: 100%;
+  background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow-x: auto; scrollbar-width: none;
 }
 .tabbar::-webkit-scrollbar { display: none; }
+/* The tab: an underline indicator, quiet at rest. Taken from the host's own tab
+   component — colour and weight change, plus a 2px bar under the active label. */
 .tab {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--text-tertiary);
-  font: inherit;
-  font-size: 13px;
-  padding: 9px 14px;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  cursor: pointer;
+  position: relative; display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+  border: 0; background: none; cursor: pointer;
+  padding: 13px 13px 12px; border-radius: 8px 8px 0 0;
+  font: 550 13.5px/1 var(--sans); color: var(--text-secondary);
   white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  transition: color 200ms ease, background-color 200ms ease;
 }
-.tab:hover { color: var(--text-secondary); }
-.tab.on { color: var(--text-primary); border-bottom-color: var(--text-primary); font-weight: 500; }
+.tab::after {
+  content: ''; position: absolute; left: 11px; right: 11px; bottom: -1px;
+  height: 2px; border-radius: var(--radius-full); background: transparent;
+}
+.tab:hover { color: var(--text-primary); background: color-mix(in srgb, var(--bg-tertiary) 55%, transparent); }
+.tab.on { color: var(--text-primary); font-weight: 650; }
+.tab.on::after { background: var(--text-primary); }
 
-/* ---- cards ---- */
+.main { padding: 20px 22px 44px; max-width: 1280px; margin: 0 auto; min-width: 0; }
+
+/* ======================= card ======================= */
+/* Matches the host's SectionCard: 14px radius, a very light border, and a mostly
+   opaque background so the page tone shows through instead of reading as a pasted
+   rectangle. */
 .box {
-  background: var(--bg-primary);
+  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-card);
-  margin-bottom: var(--space-md);
-  overflow: hidden;
+  box-shadow: var(--shadow);
+  margin-bottom: var(--space-md); overflow: hidden;
 }
 .box > header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: 13px var(--space-md);
+  display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap;
+  padding: 14px var(--space-lg);
   border-bottom: 1px solid var(--border-color);
 }
-.box > header h3 { margin: 0; font-size: 14px; font-weight: 600; }
-.box > header .hint { color: var(--text-quaternary); font-size: 12px; font-weight: 400; }
-.box .pad { padding: var(--space-md); }
-.box .grow { flex: 1; }
-
-.group-head { margin: var(--space-lg) 0 var(--space-sm); }
-.group-head:first-child { margin-top: 0; }
-.group-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
-.group-head .desc { color: var(--text-tertiary); font-size: 12px; }
-
-/* ---- stat strip ---- */
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-sm); }
-.stat {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 13px var(--space-md);
+.box > header h3 {
+  font-size: 15px; font-weight: 680; letter-spacing: -.01em;
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
 }
-.stat .label { color: var(--text-tertiary); font-size: 12px; margin-bottom: 3px; }
-.stat .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.stat.good .value { color: var(--success-color); }
-.stat.warn .value { color: var(--warning-color); }
-.stat.bad .value { color: var(--error-color); }
-
-/* ---- tables ---- */
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 9px var(--space-md); border-bottom: 1px solid var(--border-color); }
-th { color: var(--text-tertiary); font-weight: 500; font-size: 12px; }
-tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover { background: var(--bg-tertiary); }
-
-/* ---- settings rows ---- */
-.setting-group { padding: var(--space-md); border-bottom: 1px solid var(--border-color); }
-.setting-group:last-child { border-bottom: 0; }
-.setting-label { margin-bottom: 9px; }
-.setting-label .name { display: block; font-size: 13px; font-weight: 500; }
-.setting-label .desc { display: block; color: var(--text-tertiary); font-size: 12px; margin-top: 2px; }
-.setting-effect {
-  margin-top: 9px;
-  padding: 9px 11px;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: 12px;
+.box > header h3 .hint { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
+.box > header .grow { flex: 1; min-width: 0; }
+.box > header .note { color: var(--text-secondary); font-size: 12.5px; }
+.box .pad { padding: var(--space-lg); }
+.box .empty { padding: 28px var(--space-lg); text-align: center; color: var(--text-tertiary); font-size: 13px; }
+.box .foot {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 12px var(--space-lg);
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary); font-size: 12.5px;
 }
-
-/* ---- segmented control ---- */
-.seg { display: inline-flex; background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 2px; gap: 2px; }
-.seg button {
-  appearance: none; border: 0; background: transparent; color: var(--text-tertiary);
-  font: inherit; font-size: 13px; padding: 6px 15px; border-radius: 6px;
-  cursor: pointer; transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-.seg button:hover { color: var(--text-secondary); }
-.seg button.on { background: var(--bg-primary); color: var(--text-primary); font-weight: 500; box-shadow: var(--shadow); }
-
-/* ---- inputs and buttons ---- */
-input, select {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  padding: 6px 10px;
-  outline: none;
-  transition: border-color var(--dur-fast) var(--ease);
-}
-input:focus, select:focus { border-color: var(--border-hover); }
-input[type="number"] { width: 100px; font-variant-numeric: tabular-nums; }
-
-button.primary, button.ghost {
-  appearance: none; font: inherit; font-size: 13px; padding: 6px 14px;
-  border-radius: var(--radius-md); cursor: pointer; border: 1px solid transparent;
-  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
-}
-button.primary { background: var(--primary-color); color: var(--primary-contrast); }
-button.primary:hover { background: var(--primary-hover); }
-button.ghost { background: transparent; border-color: var(--border-primary); color: var(--text-secondary); }
-button.ghost:hover { background: var(--bg-tertiary); border-color: var(--border-hover); }
-button:disabled { opacity: .5; cursor: not-allowed; }
-
-.row { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap; }
-.btn-end { display: flex; gap: var(--space-sm); margin-left: auto; }
-
-/* ---- misc ---- */
-code, .mono { font-family: var(--mono); font-size: 12px; }
-code { background: var(--bg-tertiary); padding: 1px 5px; border-radius: var(--radius-sm); }
-.note { color: var(--text-tertiary); font-size: 12px; }
-.note.ok { color: var(--success-color); }
+.box .foot .grow { flex: 1; min-width: 0; }
+.note { color: var(--text-secondary); font-size: 12px; }
 .note.bad { color: var(--error-color); }
-.tag {
-  display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: var(--radius-full);
-  background: var(--bg-tertiary); color: var(--text-tertiary); margin-left: 6px;
-}
-.tag.cn { background: rgba(198, 87, 70, .14); color: var(--warning-color); }
-.tag.intl { background: rgba(91, 141, 239, .14); color: var(--info-color); }
-.empty { padding: var(--space-lg); text-align: center; color: var(--text-quaternary); font-size: 13px; }
+.note.ok { color: var(--success-color); }
+.grow { flex: 1; min-width: 0; }
 
-/* ---- toasts ---- */
-#toasts { position: fixed; right: var(--space-md); bottom: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm); z-index: 50; }
+.group-head { display: flex; align-items: baseline; gap: 10px; margin: 22px 0 10px; }
+.group-head:first-child { margin-top: 0; }
+.group-head h2 { font-size: 14px; font-weight: 680; letter-spacing: -.01em; }
+.group-head .desc { color: var(--text-secondary); font-size: 12.5px; }
+
+/* ======================= stats ======================= */
+/* One card with dividers, not a row of separate cards: this is how the host
+   renders a summary strip, and separate cards made it look like four objects of a
+   different kind next to the tables below. */
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  overflow: hidden; margin-bottom: var(--space-md);
+}
+.stat {
+  padding: 16px 18px;
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+.stat .v {
+  font: 650 24px/1.15 var(--mono); font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em; white-space: nowrap;
+}
+.stat .k { color: var(--text-secondary); font-size: 12px; margin-top: 5px; }
+.stat.good .v { color: var(--success-color); }
+.stat.warn .v { color: var(--quota-medium-color); }
+.stat.bad .v { color: var(--error-color); }
+
+/* ======================= controls ======================= */
+button, .btn {
+  font: 500 13px/1 var(--sans);
+  color: var(--text-primary); background: var(--bg-primary);
+  border: 1px solid var(--border-primary); border-radius: var(--radius-md);
+  padding: 7px 13px; cursor: pointer; white-space: nowrap;
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+}
+button:hover, .btn:hover { background: var(--bg-hover); border-color: var(--border-hover); }
+button:active { transform: translateY(.5px); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button.primary, .btn.primary {
+  background: var(--primary-color); border-color: var(--primary-color); color: var(--primary-contrast);
+}
+button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+button.danger { color: var(--error-color); border-color: color-mix(in srgb, var(--error-color) 40%, transparent); }
+button.danger:hover { background: color-mix(in srgb, var(--error-color) 12%, transparent); border-color: var(--error-color); }
+button.ghost { background: transparent; border-color: transparent; }
+button.ghost:hover { background: var(--bg-tertiary); border-color: transparent; }
+button.xs { padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
+
+/* Adjacent buttons need a gap: inline-block siblings collapse the whitespace
+   between them, which made controls look fused. */
+header > button + button,
+.btn-row > button + button { margin-left: 2px; }
+
+input[type="text"], input[type="password"], input[type="email"],
+input[type="number"], input[type="search"], select {
+  font: 400 13px/1.4 var(--sans);
+  color: var(--text-primary); background: var(--bg-quinary);
+  border: 1px solid var(--border-primary); border-radius: var(--radius-md);
+  padding: 8px 11px; width: 100%;
+  transition: border-color 200ms ease;
+}
+input:focus, select:focus { border-color: var(--primary-color); outline: none; }
+input::placeholder { color: var(--text-quaternary); }
+
+.row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.row input[type="password"] { flex: 1 1 260px; min-width: 0; }
+.btn-end { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* segmented control */
+.seg {
+  display: inline-flex; background: var(--bg-tertiary);
+  border-radius: var(--radius-full); padding: 3px; gap: 2px; flex-wrap: wrap;
+}
+.seg button {
+  border: 0; background: transparent; border-radius: var(--radius-full);
+  padding: 6px 14px; font-size: 13px; color: var(--text-secondary);
+}
+.seg button:hover { background: transparent; color: var(--text-primary); }
+.seg button.on {
+  background: var(--bg-primary); color: var(--text-primary);
+  font-weight: 650; box-shadow: var(--shadow);
+}
+.setting-effect {
+  color: var(--text-secondary); font-size: 12.5px; margin-top: 12px; line-height: 1.65;
+}
+
+/* ======================= table ======================= */
+.tbl-wrap {
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  background:
+    linear-gradient(to right, var(--bg-primary) 30%, transparent) left / 20px 100% no-repeat,
+    linear-gradient(to left, var(--bg-primary) 30%, transparent) right / 20px 100% no-repeat;
+  background-attachment: local, local;
+}
+table { border-collapse: collapse; font-size: 13px; width: 100%; }
+th {
+  text-align: left; font-weight: 550; font-size: 12px; color: var(--text-secondary);
+  padding: 11px 14px; border-bottom: 1px solid var(--border-color); white-space: nowrap;
+}
+td { padding: 11px 14px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent); }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.act, th.act { width: 1%; white-space: nowrap; text-align: right; }
+td.state, th.state { width: 1%; white-space: nowrap; }
+
+/* Two-line account cell: name on top, detail beneath. Side by side they competed
+   for the same width and made the column look ragged. */
+.acct-name { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.acct-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pill {
+  display: inline-block; padding: 2px 9px; border-radius: var(--radius-full);
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.pill.on { background: color-mix(in srgb, var(--success-color) 18%, transparent); color: var(--success-color); }
+.pill.off { background: color-mix(in srgb, var(--error-color) 16%, transparent); color: var(--error-color); }
+.pill.wait { background: color-mix(in srgb, var(--quota-medium-color) 20%, transparent); color: var(--quota-medium-color); }
+
+/* ======================= guide rows ======================= */
+/* One card per model. A five-column table could not fit the ratio strings on a
+   phone — the last columns were simply cut off — so the parameters are listed
+   under the model name instead. */
+.guide-row {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+.guide-row:last-child { border-bottom: 0; }
+.guide-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.guide-head strong { font-size: 13.5px; }
+.guide-meta {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 5px 10px;
+  margin-top: 9px;
+  font-size: 12.5px;
+}
+.guide-meta dt { color: var(--text-tertiary); }
+.guide-meta dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ======================= code block ======================= */
+pre.code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--text-primary);
+}
+pre.code code, .pad code {
+  font-family: var(--mono);
+  font-size: .94em;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ======================= trend ======================= */
+.trend { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 16px var(--space-lg); }
+.trend .bar {
+  flex: 1; background: var(--primary-color); border-radius: 3px 3px 0 0;
+  min-height: 2px; opacity: .75;
+}
+.trend .bar.bad { background: var(--error-color); }
+.trend-legend {
+  display: flex; gap: 16px; padding: 0 var(--space-lg) 14px;
+  color: var(--text-secondary); font-size: 12px;
+}
+.trend-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+.sw-ok { background: var(--primary-color); }
+.sw-bad { background: var(--error-color); }
+
+/* ======================= toast ======================= */
+#toasts {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; z-index: 50;
+  pointer-events: none; max-width: 92vw;
+}
 .toast {
-  background: var(--bg-primary); border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
-  padding: 10px var(--space-md); font-size: 13px; max-width: 330px;
+  background: var(--bg-primary); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: var(--radius-md);
+  padding: 9px 15px; font-size: 13px; box-shadow: var(--shadow-lg);
+  animation: rise 160ms ease;
 }
 .toast.bad { border-color: var(--error-color); color: var(--error-color); }
-.toast.ok { border-color: var(--success-color); }
+.toast.ok { border-color: var(--success-color); color: var(--success-color); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-ol.steps { margin: 0; padding-left: 20px; color: var(--text-secondary); font-size: 13px; }
-ol.steps li { margin: 5px 0; }
-`
+/* ======================= narrow ======================= */
+@media (max-width: 720px) {
+  .page-header { padding: 22px 14px 12px; }
+  .page-header h1 { font-size: 18px; }
+  .tabbar { padding: 0 12px; }
+  .tab { padding: 12px 11px 11px; font-size: 13px; }
+  .main { padding: 14px 12px 36px; }
+  .box > header { padding: 12px 14px; }
+  .box .pad, .trend, .trend-legend { padding-left: 14px; padding-right: 14px; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stat { padding: 13px 14px; }
+  .stat .v { font-size: 20px; }
 
-// uiScript drives the panel.
-//
-// It mirrors the host's theme, keeps the active tab across reloads, and routes
-// every control through a single data-call dispatch so adding a control never
-// means adding another listener.
-const uiScript = `
-// adoptHostTheme mirrors the host's theme onto this document.
-//
-// The panel renders inside CPA's management UI, which marks its own <html> with
-// data-theme="dark" / "white", or removes it when the user chose "follow system".
-// Reading that attribute keeps an explicit choice in sync; when it is absent (or the
-// frame is cross-origin, where the read throws) the stylesheet's media query takes
-// over, which is exactly what "follow system" means.
-//
-// Re-checked on a timer as well as at load: the host swaps the attribute without
-// reloading the iframe.
-function adoptHostTheme() {
-  var hostTheme = '';
-  try {
-    if (window.parent && window.parent !== window && window.parent.document) {
-      hostTheme = window.parent.document.documentElement.getAttribute('data-theme') || '';
-    }
-  } catch (e) {
-    hostTheme = '';
-  }
-  var root = document.documentElement;
-  if (hostTheme === 'dark' || hostTheme === 'white') {
-    root.setAttribute('data-theme', hostTheme);
-  } else {
-    root.removeAttribute('data-theme');
-  }
+  /* Touch targets: 44px is the accepted minimum, desktop sizes land near 30px. */
+  button, .btn, select,
+  input[type=text], input[type=password], input[type=email], input[type=number] { min-height: 40px; }
+  button.xs { min-height: 34px; padding: 7px 11px; }
+  /* 16px stops iOS from zooming the page when a field is focused. */
+  input[type=text], input[type=password], input[type=email], input[type=number] { font-size: 16px; }
+
+  th, td { padding: 10px 8px; }
+  table { font-size: 12.5px; }
+  /* The account column takes whatever is left after the fixed ones; the four
+     fixed cells plus the action button already exceed a 412px viewport if the
+     email is allowed to claim its natural width. */
+  .acct-name strong { max-width: 108px; }
+  td.state, th.state, td.num, th.num { padding-left: 6px; padding-right: 6px; }
+  td.act, th.act { padding-left: 4px; padding-right: 8px; }
 }
-adoptHostTheme();
-setInterval(adoptHostTheme, 3000);
-
-function showTab(id) {
-  id = String(id || '');
-  if (id && id.indexOf('view-') !== 0) id = 'view-' + id;
-
-  var pages = document.querySelectorAll('.view');
-  var shown = false;
-  for (var i = 0; i < pages.length; i++) {
-    var match = pages[i].id === id;
-    pages[i].hidden = !match;
-    if (match) shown = true;
-  }
-  // Never leave the page blank: an unknown id falls back to the first page.
-  if (!shown && pages.length) {
-    pages[0].hidden = false;
-    id = pages[0].id;
-  }
-  var tabs = document.querySelectorAll('.tabbar .tab[data-view]');
-  for (var j = 0; j < tabs.length; j++) {
-    if (tabs[j].getAttribute('data-view') === id) tabs[j].classList.add('on');
-    else tabs[j].classList.remove('on');
-  }
-  try { localStorage.setItem('doubao-panel-view', id); } catch (e) {}
-
-  // The account list is fetched when its tab is opened rather than at load, so a
-  // visitor who never looks at it does not pay for the host RPCs it needs.
-  if (id === 'view-accounts' && typeof loadAccounts === 'function') loadAccounts();
-
-  if (window.scrollY > 0) window.scrollTo(0, 0);
-}
-
-function restoreTab() {
-  var saved = '';
-  try { saved = localStorage.getItem('doubao-panel-view') || ''; } catch (e) {}
-  var page = saved ? document.getElementById(saved) : null;
-  if (page) { showTab(saved); return; }
-  var first = document.querySelector('.view');
-  if (first) showTab(first.id);
-}
-
-// ---- toast ----
-function toast(message, kind) {
-  var host = document.getElementById('toasts');
-  if (!host) return;
-  var el = document.createElement('div');
-  el.className = 'toast' + (kind ? ' ' + kind : '');
-  el.textContent = message;
-  host.appendChild(el);
-  setTimeout(function () { el.remove(); }, 4200);
-}
-
-// ---- API ----
-// Reads and writes both go to /v0/management/doubao/*, behind CPA's management
-// middleware. The page itself is served from the public resource path so it renders
-// in the host's iframe, but every JSON call needs the management key.
-//
-// A resource route only answers GET and only for the exact path it registered, so
-// putting the JSON there would need one resource entry per endpoint and would still
-// refuse writes.
-var API = '/v0/management/doubao';
-
-function managementKey() {
-  try { return localStorage.getItem('cpa-management-key') || ''; } catch (e) { return ''; }
-}
-
-function call(path, options) {
-  options = options || {};
-  var headers = options.headers || {};
-  var key = managementKey();
-  if (key) headers['Authorization'] = 'Bearer ' + key;
-  options.headers = headers;
-  return fetch(API + path, options).then(function (resp) {
-    return resp.text().then(function (text) {
-      var data = null;
-      try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
-      if (!resp.ok) {
-        var msg = (data && (data.error || data.message)) || ('HTTP ' + resp.status);
-        if (resp.status === 401 || resp.status === 403) {
-          msg = '未授权：请在「设置」里填入 CPA 管理密钥';
-        }
-        var err = new Error(msg);
-        // Carry the parsed body: an authorisation failure returns a structured 400
-        // whose error_hint is the actionable half of the message, and rethrowing a
-        // bare string would drop it.
-        err.data = data;
-        err.status = resp.status;
-        throw err;
-      }
-      return data;
-    });
-  });
-}
-
-function callWrite(path, body) {
-  return call(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-}
-
-// ---- settings ----
-// loadSettings pulls the live values on open.
-//
-// The page is rendered from the settings the plugin held at render time, which is
-// already correct — but a failure to load is worth surfacing, because it is the same
-// call the saves use, so a broken key shows up here before the user tries to save.
-function loadSettings() {
-  if (!managementKey()) return;
-  call('/settings').then(function (data) {
-    if (data && data.settings) applySettings(data.settings);
-  }).catch(function (err) {
-    if (String(err.message).indexOf('未授权') === 0) setNote('keyMsg', err.message, 'bad');
-  });
-}
-
-// setSetting writes one value and reports the outcome next to the control that
-// changed, so the message appears where the user is looking.
-function setSetting(name, value, messageId) {
-  var body = {};
-  body[name] = value;
-  callWrite('/settings', body).then(function (data) {
-    if (data && data.settings) applySettings(data.settings);
-    if (data && data.persisted === false) {
-      setNote(messageId, '已生效，但未能写入配置：' + (data.error || '未知原因'), 'bad');
-      return;
-    }
-    setNote(messageId, '已保存', 'ok');
-  }).catch(function (err) {
-    setNote(messageId, '保存失败：' + err.message, 'bad');
-  });
-}
-
-function setNote(id, text, kind) {
-  var el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = text;
-  el.className = 'note' + (kind ? ' ' + kind : '');
-  if (text) setTimeout(function () {
-    if (el.textContent === text) { el.textContent = ''; el.className = 'note'; }
-  }, 3200);
-}
-
-// applySettings repaints every control that reflects a setting, so a save updates
-// the whole page rather than just the control that was touched.
-function applySettings(s) {
-  if (!s) return;
-  segSelect('realmSeg', s.realm_default || 'doubao');
-  segSelect('exposeSeg', s.expose_models ? 'on' : 'off');
-  segSelect('debugSeg', s.debug ? 'on' : 'off');
-  var map = {
-    request_timeout_seconds: 'setTimeout',
-    reply_poll_seconds: 'setReply',
-    media_poll_seconds: 'setMedia',
-    reply_poll_interval_ms: 'setIntervalMs',
-    default_model: 'setDefaultModel'
-  };
-  for (var key in map) {
-    var el = document.getElementById(map[key]);
-    if (el && s[key] !== undefined) el.value = s[key];
-  }
-  var effect = document.getElementById('realmEffect');
-  if (effect && effect.dataset[s.realm_default]) effect.textContent = effect.dataset[s.realm_default];
-}
-
-function segSelect(id, value) {
-  var seg = document.getElementById(id);
-  if (!seg) return;
-  var buttons = seg.querySelectorAll('button');
-  for (var i = 0; i < buttons.length; i++) {
-    if (buttons[i].getAttribute('data-value') === value) buttons[i].classList.add('on');
-    else buttons[i].classList.remove('on');
-  }
-}
-
-function numSetting(id, name, messageId) {
-  var el = document.getElementById(id);
-  if (!el) return;
-  var v = parseInt(el.value, 10);
-  if (isNaN(v) || v <= 0) { setNote(messageId, '请输入正整数', 'bad'); return; }
-  setSetting(name, v, messageId);
-}
-
-function textSetting(id, name, messageId) {
-  var el = document.getElementById(id);
-  if (!el) return;
-  setSetting(name, el.value, messageId);
-}
-
-// ---- named actions ----
-// The dispatcher looks these up on window by the name in data-call, so each one is
-// a plain global function.
-
-// setRealm switches the default upstream and isolates the other side's accounts.
-//
-// It calls /realm/switch rather than /settings because the two effects belong
-// together: changing the upstream while the other realm's accounts stay routable
-// produces calls that fail with a country error, which reads as a broken credential.
-function setRealm(value) {
-  segSelect('realmSeg', value);
-  setNote('realmMsg', '切换中…', '');
-  callWrite('/realm/switch', { realm: value }).then(function (data) {
-    applySettings(data.settings);
-    if (data.accounts) renderAccounts(data.accounts);
-    var parts = [];
-    if (data.disabled_other) parts.push('已禁用 ' + data.disabled_other + ' 个另一侧账号');
-    if (data.reenabled) parts.push('已恢复 ' + data.reenabled + ' 个本侧账号');
-    if (data.isolate_error) parts.push('账号同步失败：' + data.isolate_error);
-    if (data.persisted === false) parts.push('未能写入配置：' + (data.error || ''));
-    setNote('realmMsg', parts.length ? parts.join('；') : '已切换', parts.some(function (p) {
-      return p.indexOf('失败') >= 0 || p.indexOf('未能') >= 0;
-    }) ? 'bad' : 'ok');
-  }).catch(function (err) {
-    setNote('realmMsg', '切换失败：' + err.message, 'bad');
-  });
-}
-
-function setExpose(value) {
-  segSelect('exposeSeg', value);
-  setSetting('expose_models', value === 'on', 'exposeMsg');
-}
-
-function setDebug(value) {
-  segSelect('debugSeg', value);
-  setSetting('debug', value === 'on', 'debugMsg');
-}
-
-function saveNum(inputId, name) {
-  numSetting(inputId, name, 'callMsg');
-}
-
-// ---- plugin-side authorisation ----
-// The form talks to /doubao/authorize, which validates the cookie against the live
-// upstream and writes the auth record. CPA's own OAuth callback box is not involved:
-// it insists on a callback URL and answers "state is required" to a pasted cookie.
-
-function pickAuthRealm(value) {
-  segSelect('authRealmSeg', value);
-  setNote('authResult', '', '');
-}
-
-function selectedAuthRealm() {
-  var seg = document.getElementById('authRealmSeg');
-  if (!seg) return '';
-  var on = seg.querySelector('button.on');
-  return on ? on.getAttribute('data-value') : '';
-}
-
-function clearAuthForm() {
-  var ta = document.getElementById('authCookies');
-  var lb = document.getElementById('authLabel');
-  if (ta) ta.value = '';
-  if (lb) lb.value = '';
-  setNote('authResult', '', '');
-}
-
-function submitAuthorize() {
-  var ta = document.getElementById('authCookies');
-  var lb = document.getElementById('authLabel');
-  var btn = document.getElementById('authSubmit');
-  if (!ta) return;
-  var cookies = (ta.value || '').trim();
-  if (!cookies) { setNote('authResult', '请先粘贴 Cookie。', 'bad'); return; }
-
-  if (btn) { btn.disabled = true; btn.textContent = '校验中…'; }
-  setNote('authResult', '正在向上游校验…', '');
-
-  callWrite('/authorize', {
-    cookies: cookies,
-    realm: selectedAuthRealm(),
-    label: lb ? (lb.value || '').trim() : ''
-  }).then(function (data) {
-    showAuthorizeResult(data, true);
-    if (data && data.ok) {
-      ta.value = '';
-      if (lb) lb.value = '';
-      loadAccounts();
-    }
-  }).catch(function (err) {
-    // A rejected credential comes back as a structured 400, so the body carries the
-    // detail (including the actionable hint) even though the status is an error.
-    showAuthorizeResult(err.data, false);
-    if (!err.data) setNote('authResult', err.message, 'bad');
-  }).then(function () {
-    if (btn) { btn.disabled = false; btn.textContent = '校验并授权'; }
-  });
-}
-
-function showAuthorizeResult(data, ok) {
-  var host = document.getElementById('authResult');
-  if (!host) return;
-  if (!data) { host.innerHTML = ''; return; }
-
-  if (!data.ok) {
-    var msg = esc(data.error || '授权失败');
-    if (data.error_hint) msg += '<div class="note" style="margin-top:6px">' + esc(data.error_hint) + '</div>';
-    host.innerHTML = '<div class="toast bad" style="max-width:none">' + msg + '</div>';
-    return;
-  }
-
-  var lines = [];
-  lines.push('<div><b>授权成功</b> — ' + esc(data.realm_name || data.realm) + '</div>');
-  if (data.label) lines.push('<div class="note">账号：' + esc(data.label) + '</div>');
-  if (data.model_count) lines.push('<div class="note">可用模型：' + esc(data.model_count) + ' 个</div>');
-  if (data.expires_at) lines.push('<div class="note">会话有效期至：' + esc(data.expires_at) + '</div>');
-  (data.warnings || []).forEach(function (w) {
-    lines.push('<div class="note bad">' + esc(w) + '</div>');
-  });
-  host.innerHTML = '<div class="toast ok" style="max-width:none">' + lines.join('') + '</div>';
-}
-
-// ---- accounts ----
-// renderAccounts replaces the table body.
-//
-// The script rebuilds each row because the buttons carry a data-call the dispatcher
-// resolves at click time, and innerHTML on the wrapper is what keeps the markup in the
-// backend's Go source rather than duplicated here.
-function renderAccounts(list) {
-  var wrap = document.getElementById('acctWrap');
-  if (!wrap) return;
-  if (!list || !list.length) {
-    wrap.innerHTML = '<div class="empty">还没有账号。展开下面的「新增授权」按步骤添加。</div>';
-    return;
-  }
-  var html = '<table><thead><tr><th>账号</th><th>上游</th><th>状态</th><th>操作</th></tr></thead><tbody>';
-  list.forEach(function (a) {
-    var realmTag = a.realm === 'dola'
-      ? '<span class="tag intl">' + esc(a.realm_name) + '</span>'
-      : '<span class="tag cn">' + esc(a.realm_name) + '</span>';
-    var state = a.disabled
-      ? '<span class="tag">已禁用</span>'
-      : '<span class="tag intl">启用中</span>';
-    var action = a.disabled ? '启用' : '禁用';
-    html += '<tr>'
-      + '<td>' + esc(a.label || a.name || a.id) + '</td>'
-      + '<td>' + realmTag + '</td>'
-      + '<td>' + state + (a.status_message ? '<div class="note">' + esc(a.status_message) + '</div>' : '') + '</td>'
-      + '<td><button type="button" class="ghost"'
-      + ' data-call="toggleAccount"'
-      + ' data-arg0="' + esc(a.auth_index || '') + '"'
-      + ' data-arg1=""'
-      + ' data-arg2="' + (a.disabled ? 'true' : 'false') + '">' + action + '</button></td>'
-      + '</tr>';
-  });
-  wrap.innerHTML = html + '</tbody></table>';
-}
-
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-  });
-}
-
-function loadAccounts() {
-  call('/accounts').then(function (data) {
-    if (data && data.accounts) renderAccounts(data.accounts);
-    else setNote('acctMsg', '未返回账号列表', 'bad');
-  }).catch(function (err) {
-    setNote('acctMsg', err.message, 'bad');
-    var wrap = document.getElementById('acctWrap');
-    if (wrap) wrap.innerHTML = '<div class="empty">' + esc(err.message) + '</div>';
-  });
-}
-
-function reloadAccounts() {
-  setNote('acctMsg', '读取中…', '');
-  call('/accounts').then(function (data) {
-    if (data && data.accounts) renderAccounts(data.accounts);
-    setNote('acctMsg', '已刷新', 'ok');
-  }).catch(function (err) {
-    setNote('acctMsg', err.message, 'bad');
-  });
-}
-
-function toggleAccount(authIndex, path, disabled) {
-  callWrite('/account/toggle', {
-    auth_index: authIndex,
-    path: path,
-    disabled: disabled === 'true' || disabled === true
-  }).then(function (data) {
-    if (data.accounts) renderAccounts(data.accounts);
-    setNote('acctMsg', (data.disabled ? '已禁用 ' : '已启用 ') + (data.changed || ''), 'ok');
-  }).catch(function (err) {
-    setNote('acctMsg', err.message, 'bad');
-  });
-}
-
-function bulkAccounts(mode) {
-  var disable = mode === 'disable';
-  call('/accounts').then(function (data) {
-    var list = (data && data.accounts) || [];
-    var targets = list.filter(function (a) { return a.disabled !== disable; });
-    if (!targets.length) { setNote('acctMsg', '无需改动', ''); return; }
-    setNote('acctMsg', '处理中…', '');
-    // Sequential rather than parallel: each call rewrites a credential file, and
-    // fanning out would race on the shared auth store.
-    var i = 0;
-    function next() {
-      if (i >= targets.length) {
-        reloadAccounts();
-        setNote('acctMsg', (disable ? '已禁用 ' : '已启用 ') + targets.length + ' 个账号', 'ok');
-        return;
-      }
-      var a = targets[i++];
-      callWrite('/account/toggle', {
-        auth_index: a.auth_index, disabled: disable
-      }).then(next).catch(function (err) {
-        setNote('acctMsg', '批量操作中断：' + err.message, 'bad');
-      });
-    }
-    next();
-  }).catch(function (err) { setNote('acctMsg', err.message, 'bad'); });
-}
-
-// ---- management key ----
-function saveKey() {
-  var el = document.getElementById('mgmtKey');
-  if (!el) return;
-  var v = (el.value || '').trim();
-  if (!v) { setNote('keyMsg', '请输入密钥', 'bad'); return; }
-  try { localStorage.setItem('cpa-management-key', v); } catch (e) {
-    setNote('keyMsg', '浏览器拒绝写入 localStorage', 'bad');
-    return;
-  }
-  el.value = '';
-  showKeyState();
-  setNote('keyMsg', '已保存', 'ok');
-}
-
-function clearKey() {
-  try { localStorage.removeItem('cpa-management-key'); } catch (e) {}
-  showKeyState();
-  setNote('keyMsg', '已清除', 'ok');
-}
-
-function showKeyState() {
-  var el = document.getElementById('keyState');
-  if (!el) return;
-  var has = false;
-  try { has = !!localStorage.getItem('cpa-management-key'); } catch (e) {}
-  el.textContent = has ? '当前：已保存密钥，可以直接保存设置。' : '当前：未保存密钥，保存设置会失败。';
-}
-
-// ---- single dispatch ----
-// One listener for the whole document: every control declares data-call plus
-// positional data-argN attributes, so adding a control is a markup change only.
-document.addEventListener('click', function (ev) {
-  var tab = ev.target.closest ? ev.target.closest('.tab[data-view]') : null;
-  if (tab) { showTab(tab.getAttribute('data-view')); return; }
-
-  var el = ev.target.closest ? ev.target.closest('[data-call]') : null;
-  if (!el) return;
-  var action = el.getAttribute('data-call');
-  var args = [];
-  for (var i = 0; el.getAttribute('data-arg' + i) !== null; i++) {
-    args.push(el.getAttribute('data-arg' + i));
-  }
-  if (typeof window[action] === 'function') window[action].apply(null, args);
-});
-
-document.addEventListener('DOMContentLoaded', function () {
-  restoreTab();
-  showKeyState();
-  loadSettings();
-});
-if (document.readyState !== 'loading') { restoreTab(); showKeyState(); loadSettings(); }
+/* Upstream name with its region badge. The badge is a sibling span, so without a
+   wrapper the two run together as "豆包CN". */
+.realm { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* Inside the flex wrapper the badge's own left margin is unreliable: it is the
+   gap that separates the two, so the margin is dropped rather than doubled. */
+.realm .tag { margin-left: 0; }
 `

@@ -29,7 +29,7 @@ const (
 	// as 0.1.0 and the panel showed a version that did not exist. The release
 	// script now rewrites this line before building, and a test pins it to
 	// registry.json so a mismatch fails the suite rather than shipping.
-	pluginVersion = "0.2.5"
+	pluginVersion = "0.3.0"
 
 	pluginAuthor = "Lxapk"
 	pluginRepo   = "https://github.com/Lxapk/doubao-cpa-plugin"
@@ -66,6 +66,10 @@ type registrationCaps struct {
 
 	// ManagementAPI serves the plugin's own panel under /v0/management/<name>.
 	ManagementAPI bool `json:"management_api"`
+
+	// Scheduler lets the plugin choose which credential a request uses, which is
+	// what makes round-robin / fill-first switching configurable.
+	Scheduler bool `json:"scheduler"`
 }
 
 // managementRegistrationResponse mirrors pluginhost.rpcManagementRegistrationResponse.
@@ -132,7 +136,6 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	// ---- execution -----------------------------------------------------
 	case pluginabi.MethodExecutorIdentifier:
 		return executorIdentifier()
-
 	case pluginabi.MethodExecutorExecute:
 		return executorExecute(request)
 
@@ -141,6 +144,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 
 	case pluginabi.MethodExecutorCountTokens:
 		return executorCountTokens(request)
+
+	// ---- account selection ---------------------------------------------
+	case pluginabi.MethodSchedulerPick:
+		return schedulerPick(request)
 
 	// ---- management panel ----------------------------------------------
 	case pluginabi.MethodManagementRegister:
@@ -204,10 +211,16 @@ func buildRegistration() registration {
 			Executor:       true,
 			// The credentials are auth-bound, so the host may bind models to a
 			// specific credential as well as serving them statically.
-			ExecutorModelScope:    pluginapi.ExecutorModelScopeBoth,
-			ExecutorInputFormats:  []string{"chat-completions"},
-			ExecutorOutputFormats: []string{"chat-completions"},
+			ExecutorModelScope: pluginapi.ExecutorModelScopeBoth,
+			// All three OpenAI surfaces are declared: chat completions for
+			// conversation, openai-image for /v1/images/generations and
+			// openai-video for /v1/videos. The names are what the host matches
+			// on when deciding whether this executor may serve a request, so a
+			// missing entry means the endpoint never reaches the plugin.
+			ExecutorInputFormats:  []string{"chat-completions", "openai-image", "openai-video"},
+			ExecutorOutputFormats: []string{"chat-completions", "openai-image", "openai-video"},
 			ManagementAPI:         true,
+			Scheduler:             true,
 		},
 	}
 }

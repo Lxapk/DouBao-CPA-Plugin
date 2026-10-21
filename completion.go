@@ -189,6 +189,13 @@ func buildCompletionRequest(creds *credentials, text string, mode generationMode
 	if mode.Skill > 0 {
 		option.AggregateParams.MentionSkillList = fmt.Sprintf("[%d]", mode.Skill)
 	}
+	// Deep thinking is carried in three places in the client's own request: the
+	// option, the aggregate parameters and the ext map. The server reads whichever
+	// the current build sends, so all three are set rather than guessing.
+	if mode.DeepThink {
+		option.NeedDeepThink = 1
+		option.AggregateParams.ReasoningEffort = "3"
+	}
 
 	generalTaskParam, _ := json.Marshal(map[string]any{
 		"runtime_type":     0,
@@ -204,7 +211,7 @@ func buildCompletionRequest(creds *credentials, text string, mode generationMode
 
 	ext := map[string]string{
 		"agent_mode":                    "2",
-		"use_deep_think":                "0",
+		"use_deep_think":                deepThinkFlag(mode),
 		"general_task_param":            string(generalTaskParam),
 		"collection_id":                 "",
 		"is_finish":                     "1",
@@ -255,6 +262,8 @@ type generationMode struct {
 	Skill int
 	// Kind is "text", "image" or "video", used to pick the reply parser.
 	Kind string
+	// DeepThink asks the upstream to reason before answering.
+	DeepThink bool
 }
 
 // completionEvent is one decoded SSE event.
@@ -352,6 +361,14 @@ func (c *client) streamCompletion(ctx context.Context, body *completionRequest, 
 		return fmt.Errorf("读取上游流失败: %w", errScan)
 	}
 	return nil
+}
+
+// deepThinkFlag renders the ext flag for deep thinking.
+func deepThinkFlag(mode generationMode) string {
+	if mode.DeepThink {
+		return "1"
+	}
+	return "0"
 }
 
 func firstTextBlock(body *completionRequest) string {

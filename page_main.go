@@ -2,14 +2,20 @@ package main
 
 import (
 	"fmt"
+	"html"
 	"strings"
+	"time"
 )
 
-// The panel page.
+// The panel's page frame.
 //
-// Every view is always in the document and only one is visible at a time, which is
-// what makes tab switching instant and keeps the page working with the host's
-// iframe — there is no router and no history to synchronise.
+// Structure mirrors the Tinker plugin: a title block, a tab strip, then one page
+// per functional area. Every card carries its own title and its own actions in
+// the header, so a button sits next to what it acts on rather than in a toolbar
+// at the top of the page.
+//
+// Each page is its own function so the shape of the panel is readable from the
+// list of names.
 
 // renderMainPage assembles the whole page.
 func renderMainPage() string {
@@ -22,26 +28,28 @@ func renderMainPage() string {
 	b.WriteString(renderHeader())
 	b.WriteString(renderNav())
 	b.WriteString(`<main class="main">`)
-
-	b.WriteString(renderOverviewView())
+	// Every page is in the document; only one is visible at a time.
 	b.WriteString(renderAccountsView())
-	b.WriteString(renderModelsView())
+	b.WriteString(renderUsageView())
+	b.WriteString(renderGuideView())
 	b.WriteString(renderSettingsView())
-
 	b.WriteString(`</main></div>`)
+
 	b.WriteString(`<div id="toasts"></div>`)
-	b.WriteString(`<script>` + uiScript + `</script>`)
+	b.WriteString(panelScript())
 	b.WriteString(`</body></html>`)
 	return b.String()
 }
 
-// renderHeader is the title block above the tabs.
 func renderHeader() string {
-	return `<header class="page-header">` +
-		`<h1>豆包 / Dola 控制台</h1>` +
-		`<p class="desc">把一个插件同时接入豆包（国内版）与 Dola（国际版），` +
-		`反代为 CPA 的 OpenAI 兼容接口：文本对话、深度思考、图片生成与视频生成。</p>` +
-		`</header>`
+	var b strings.Builder
+	b.WriteString(`<header class="page-header">`)
+	b.WriteString(`<h1>豆包 / Dola 控制台</h1>`)
+	b.WriteString(`<p class="desc">把一个插件同时接入豆包（国内版）与 Dola（国际版），` +
+		`反代为 CPA 的 OpenAI 兼容接口：文本对话、深度思考、图片生成与视频生成，` +
+		`支持多账号轮换与调用统计。</p>`)
+	b.WriteString(`</header>`)
+	return b.String()
 }
 
 // renderNav builds the tab strip.
@@ -52,13 +60,17 @@ func renderHeader() string {
 func renderNav() string {
 	var b strings.Builder
 	b.WriteString(`<nav class="tabbar">`)
-	for _, item := range []struct{ view, label string }{
-		{"view-overview", "总览"},
+	for i, item := range []struct{ view, label string }{
 		{"view-accounts", "账号"},
-		{"view-models", "模型"},
+		{"view-usage", "统计"},
+		{"view-guide", "说明"},
 		{"view-settings", "设置"},
 	} {
-		b.WriteString(`<button type="button" class="tab" data-view="` + item.view + `">` +
+		cls := "tab"
+		if i == 0 {
+			cls += " on"
+		}
+		b.WriteString(`<button type="button" class="` + cls + `" data-view="` + item.view + `">` +
 			item.label + `</button>`)
 	}
 	b.WriteString(`</nav>`)
@@ -72,127 +84,24 @@ func realmLabel(r realm) string {
 	if r == realmDola {
 		cls = "intl"
 	}
-	return htmlEscape(profile.DisplayName) + `<span class="tag ` + cls + `">` + profile.Region + `</span>`
-}
-
-// ---------------------------------------------------------------------------
-// Overview
-// ---------------------------------------------------------------------------
-
-// renderOverviewView shows what the plugin is and how to start.
-//
-// First-run guidance belongs here rather than in the settings page: a user who has
-// just installed the plugin needs the two upstreams explained and the cookie steps
-// spelled out before any setting means anything.
-func renderOverviewView() string {
-	settings := state.settings.get()
-	var b strings.Builder
-	b.WriteString(`<section class="view" id="view-overview">`)
-
-	b.WriteString(`<div class="stats">`)
-	b.WriteString(statCard("", "上游", len(allRealms)))
-	b.WriteString(statCard("", "可用模型", len(buildCatalogue())))
-	b.WriteString(statCard("", "默认上游", profileFor(settings.RealmDefault).DisplayName))
-	b.WriteString(statCard("", "插件版本", pluginVersion))
-	b.WriteString(`</div>`)
-
-	// ---- upstreams ----
-	b.WriteString(`<div class="group-head"><h2>两个上游</h2>` +
-		`<span class="desc">共用一套协议，只有站点与区域不同</span></div>`)
-	b.WriteString(`<div class="box"><div class="pad" style="padding:0">`)
-	b.WriteString(`<table><thead><tr><th>标识</th><th>名称</th><th>站点</th><th>aid</th><th>区域</th></tr></thead><tbody>`)
-	for _, r := range allRealms {
-		p := profileFor(r)
-		mark := ""
-		if r == settings.RealmDefault {
-			mark = `<span class="tag">默认</span>`
-		}
-		b.WriteString(fmt.Sprintf(
-			`<tr><td><code>%s</code>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s / %s</td></tr>`,
-			r, mark, realmLabel(r), htmlEscape(p.Host), p.AID, p.Region, p.SysRegion,
-		))
-	}
-	b.WriteString(`</tbody></table></div></div>`)
-
-	// ---- how to authorise ----
-	b.WriteString(`<div class="group-head"><h2>如何授权</h2>` +
-		`<span class="desc">凭据是浏览器 Cookie，没有可用的 OAuth 回调</span></div>`)
-	b.WriteString(`<div class="box"><div class="pad">`)
-	b.WriteString(`<ol class="steps">`)
-	b.WriteString(`<li>在浏览器中登录 <code>www.doubao.com</code>（国内版）或 <code>www.dola.com</code>（国际版）。</li>`)
-	b.WriteString(`<li>按 <b>F12</b> 打开开发者工具，切到 <b>Network</b>，刷新页面。</li>`)
-	b.WriteString(`<li>点击任意一条该站点的请求，在 <b>Request Headers</b> 中找到 <code>Cookie</code>。</li>`)
-	b.WriteString(`<li>复制 Cookie 的完整值（不要带 <code>Cookie:</code> 前缀），粘贴到 CPA 的授权页面。</li>`)
-	b.WriteString(`</ol>`)
-	b.WriteString(`<div class="note" style="margin-top:12px">必须是<b>登录后</b>的完整 Cookie，` +
-		`其中要包含 <code>flow_cur_user_sec_id</code> 与 <code>sessionid</code>。` +
-		`缺少前者时网关会认为会话无效。</div>`)
-	b.WriteString(`<div class="note" style="margin-top:8px">两个上游的账号彼此独立：` +
-		`豆包账号不能用于 Dola，反之亦然（会返回 <code>710022003 CountryRestricted</code>）。</div>`)
-	b.WriteString(`</div></div>`)
-
-	b.WriteString(`</section>`)
-	return b.String()
-}
-
-// ---------------------------------------------------------------------------
-// Accounts
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Models
-// ---------------------------------------------------------------------------
-
-// renderModelsView lists the catalogue the plugin publishes.
-func renderModelsView() string {
-	b := &strings.Builder{}
-	b.WriteString(`<section class="view" id="view-models" hidden>`)
-
-	b.WriteString(`<div class="group-head"><h2>模型别名</h2>` +
-		`<span class="desc">上游的内部代号不稳定，因此对外暴露的是行为别名</span></div>`)
-	b.WriteString(`<div class="box"><div class="pad" style="padding:0">`)
-	b.WriteString(`<table><thead><tr><th>别名</th><th>说明</th></tr></thead><tbody>`)
-	for _, alias := range capabilityAliases {
-		b.WriteString(fmt.Sprintf(`<tr><td><code>%s</code></td><td>%s</td></tr>`,
-			alias.ID, htmlEscape(alias.Description)))
-	}
-	b.WriteString(`</tbody></table></div></div>`)
-
-	b.WriteString(`<div class="group-head"><h2>调用时如何指定上游</h2></div>`)
-	b.WriteString(`<div class="box"><div class="pad">`)
-	b.WriteString(`<p style="margin:0 0 10px">两个上游暴露同名的模型，所以用前缀区分：</p>`)
-	b.WriteString(`<div class="box" style="margin:0"><div class="pad" style="padding:0">`)
-	b.WriteString(`<table><tbody>`)
-	b.WriteString(`<tr><td><code>doubao/default</code></td><td>国内版 · 默认助手</td></tr>`)
-	b.WriteString(`<tr><td><code>dola/image</code></td><td>国际版 · 图像生成</td></tr>`)
-	b.WriteString(`<tr><td><code>default</code></td><td>不带前缀时使用设置中的默认上游</td></tr>`)
-	b.WriteString(`</tbody></table></div></div>`)
-	b.WriteString(`</div></div>`)
-
-	b.WriteString(`<div class="group-head"><h2>完整模型列表</h2>` +
-		`<span class="desc">与 <code>/v1/models</code> 返回一致</span></div>`)
-	b.WriteString(`<div class="box"><div class="pad" style="padding:0">`)
-	b.WriteString(`<table><thead><tr><th>模型 ID</th><th>上游</th><th>说明</th></tr></thead><tbody>`)
-	for _, m := range buildCatalogue() {
-		owner := htmlEscape(m.OwnedBy)
-		if owner == "" {
-			owner = "—"
-		}
-		b.WriteString(fmt.Sprintf(`<tr><td><code>%s</code></td><td>%s</td><td>%s</td></tr>`,
-			htmlEscape(m.ID), owner, htmlEscape(m.Description)))
-	}
-	b.WriteString(`</tbody></table></div></div>`)
-
-	b.WriteString(`</section>`)
-	return b.String()
+	return `<span class="realm">` + htmlEscape(profile.DisplayName) +
+		`<span class="tag ` + cls + `">` + profile.Region + `</span></span>`
 }
 
 // statCard appends one cell of the summary strip. tone is "", "good", "warn" or "bad".
-func statCard(tone, label string, value any) string {
+func statCard(b *strings.Builder, tone, label string, value any) {
 	cls := "stat"
 	if tone != "" {
 		cls += " " + tone
 	}
-	return fmt.Sprintf(`<div class="%s"><div class="label">%s</div><div class="value">%v</div></div>`,
-		cls, htmlEscape(label), value)
+	b.WriteString(`<div class="` + cls + `"><div class="v">` + html.EscapeString(fmt.Sprint(value)) +
+		`</div><div class="k">` + html.EscapeString(label) + `</div></div>`)
+}
+
+// humanTime renders a Unix timestamp for the tables, with a dash for "never".
+func humanTime(sec int64) string {
+	if sec <= 0 {
+		return "—"
+	}
+	return time.Unix(sec, 0).Format("01-02 15:04")
 }

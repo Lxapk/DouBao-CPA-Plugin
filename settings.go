@@ -23,6 +23,14 @@ type pluginSettings struct {
 	ReplyPollIntervalMS int `yaml:"reply_poll_interval_ms"`
 	// Debug turns on verbose logging.
 	Debug bool `yaml:"debug"`
+	// Routing decides how a model call picks an account.
+	Routing routingSettings `yaml:"routing"`
+}
+
+// routingSettings controls how requests are spread over the account pool.
+type routingSettings struct {
+	// Strategy is one of round_robin / fill_first / random / by_usage.
+	Strategy string `yaml:"strategy"`
 }
 
 // defaultSettings returns the values used before any config arrives.
@@ -35,6 +43,7 @@ func defaultSettings() pluginSettings {
 		MediaPollSeconds:      600,
 		ReplyPollIntervalMS:   700,
 		Debug:                 false,
+		Routing:               routingSettings{Strategy: routingRoundRobin},
 	}
 }
 
@@ -133,6 +142,13 @@ func applyScope(scope map[string]any, out *pluginSettings) {
 			out.Debug = b
 		}
 	}
+	if v, ok := scope["routing"]; ok {
+		if nested, isMap := v.(map[string]any); isMap {
+			if s, isStr := nested["strategy"].(string); isStr && normalizeStrategy(s) != "" {
+				out.Routing.Strategy = normalizeStrategy(s)
+			}
+		}
+	}
 }
 
 func (h *settingsHolder) get() pluginSettings {
@@ -155,10 +171,11 @@ func (h *settingsHolder) set(next pluginSettings) {
 // pluginState is the process-wide state.
 type pluginState struct {
 	settings settingsHolder
+	logs     *callLog
 }
 
 var state = func() *pluginState {
-	s := &pluginState{}
+	s := &pluginState{logs: newCallLog(500)}
 	s.settings.when = defaultSettings()
 	return s
 }()
@@ -169,4 +186,6 @@ type lifecycleRequest struct {
 }
 
 // shutdownPlugin is called on plugin.shutdown and process teardown.
-func shutdownPlugin() {}
+func shutdownPlugin() {
+	stats.save()
+}
