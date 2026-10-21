@@ -97,6 +97,10 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
+      # gh resolves the repository from the checkout; without it every command
+      # fails with "not a git repository".
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: doubao_*
