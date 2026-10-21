@@ -1,0 +1,103 @@
+name: release
+
+# Publishing is triggered by a version tag, because that is the only event that
+# carries the version the assets must be named after. The build workflow already
+# gates every push to main; this one repeats the checks so a tag pushed straight
+# from a branch cannot ship an untested binary.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./...
+
+      - name: Test
+        run: CGO_ENABLED=0 go test -count=1 ./...
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # The tag is the authority for the version: it is stamped into the source
+      # here so the library reports the same version the release is published
+      # under. Leaving it to the committed constant is how the two drifted apart
+      # in the first place.
+      - name: Stamp version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sed "s/pluginVersion = \"[^\"]*\"/pluginVersion = \"${version}\"/" rpc.go > rpc.go.tmp
+          mv rpc.go.tmp rpc.go
+          grep -q "pluginVersion = \"${version}\"" rpc.go
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      - name: Build plugin
+        env:
+          CGO_ENABLED: '1'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          libname="doubao-v${VERSION}.so"
+          go build -buildmode=c-shared -trimpath -o "$libname" .
+          rm -f doubao.h
+          test -f "$libname"
+          # The store resolves the library at the archive root by exact name, so
+          # the file is zipped on its own rather than inside a directory tree.
+          zip -q "doubao_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip" "$libname"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doubao_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: doubao_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+          if-no-files-found: error
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: doubao_*
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          # The name field must be the bare asset name: the store looks an entry
+          # up by exact name, so a "./" prefix reads as "checksum not found".
+          shasum -a 256 ./*.zip | sed 's|\./||' | sort > checksums.txt
+          cat checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "v${version}" \
+            --generate-notes \
+            ./*.zip checksums.txt
