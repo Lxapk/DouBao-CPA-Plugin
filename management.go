@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -39,6 +40,13 @@ func managementRegistration() managementRegistrationResponse {
 				Menu:        pluginDisplayName,
 				Description: "账号、统计、能力说明与插件设置，全部集中在这一页。",
 			},
+			{
+				// 手机号登录页。CPA 的授权弹窗跳到这个地址，页面本身不需要
+				// 管理密钥，所以放在资源路由下。
+				Path:        "login",
+				Menu:        "",
+				Description: "豆包登录：填手机号接收短信验证码。",
+			},
 		},
 		Routes: []pluginapi.ManagementRoute{
 			{Method: http.MethodGet, Path: "/" + pluginName + "/status", Description: "插件状态：上游、模型与当前设置。"},
@@ -46,6 +54,8 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: "/" + pluginName + "/account/toggle", Description: "启用或禁用某个账号。"},
 			{Method: http.MethodPost, Path: "/" + pluginName + "/account/remove", Description: "移除某个账号的本地记录。"},
 			{Method: http.MethodPost, Path: "/" + pluginName + "/authorize", Description: "用粘贴的 Cookie 授权一个账号。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/login/send", Description: "登录页：发送短信验证码。"},
+			{Method: http.MethodPost, Path: "/" + pluginName + "/login/verify", Description: "登录页：校验验证码并写入账号。"},
 			{Method: http.MethodPost, Path: "/" + pluginName + "/realm/switch", Description: "切换默认上游并隔离另一侧账号。"},
 			{Method: http.MethodGet, Path: "/" + pluginName + "/calls", Description: "最近的调用记录。"},
 			{Method: http.MethodPost, Path: "/" + pluginName + "/calls/clear", Description: "清空调用记录。"},
@@ -81,6 +91,24 @@ func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementRespo
 	switch path {
 	case "", "/", "/panel", "/home":
 		return htmlResponse(renderMainPage())
+
+	case "/login":
+		// CPA 的资源路由只给 GET，页面从这里出；提交走下面的 /login/send
+		// 与 /login/verify（管理路由），由同一份 HTML 里的脚本调用。
+		//
+		// 两种进来方式：CPA 授权流程带 state（登录会话已建好），面板的
+		// 「打开登录页」带 realm（没有会话，只借这个页面登录）。
+		loginState := queryParam(req, "state")
+		if loginState == "" {
+			loginState = startPanelLogin(queryParam(req, "realm"))
+		}
+		return htmlResponse(renderLoginPage(loginState))
+
+	case "/login/send":
+		return handleLoginSendCode(req.Body)
+
+	case "/login/verify":
+		return handleLoginVerify(req.Body)
 
 	case "/status":
 		return jsonResponse(statusDocument())
@@ -143,6 +171,39 @@ func handlePanelRoute(req pluginapi.ManagementRequest) pluginapi.ManagementRespo
 		// somewhere useful rather than on a bare 404.
 		return htmlResponse(renderMainPage())
 	}
+}
+
+// startPanelLogin opens a login session for a realm chosen in the panel.
+//
+// 面板打开登录页时并没有经过 CPA 的 auth.login.start，所以这里补一个会话：
+// 页面提交验证码后要靠它把结果挂回去，CPA 那边的轮询也能收敛。
+func startPanelLogin(realmHint string) string {
+	r := normalizeRealm(realmHint)
+	if r == "" {
+		r = state.settings.get().RealmDefault
+	}
+	if r == "" {
+		r = realmDoubao
+	}
+	loginState := string(r) + "-" + randomUUID()
+	pendingLogins.put(loginState, &pendingLogin{Realm: r, Status: "waiting"})
+	return loginState
+}
+
+// queryParam reads one query parameter off a management request.
+//
+// CPA hands over the parsed query map rather than the raw URL, so the value has
+// to be looked up there first and the path string parsed second.
+func queryParam(req pluginapi.ManagementRequest, name string) string {
+	if values, ok := req.Query[name]; ok && len(values) > 0 {
+		return strings.TrimSpace(values[0])
+	}
+	if idx := strings.IndexByte(req.Path, '?'); idx >= 0 {
+		if parsed, errParse := url.ParseQuery(req.Path[idx+1:]); errParse == nil {
+			return strings.TrimSpace(parsed.Get(name))
+		}
+	}
+	return ""
 }
 
 // accountsPayload renders the account table.

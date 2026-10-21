@@ -16,6 +16,10 @@ import (
 type pendingLogin struct {
 	Realm realm
 	At    time.Time
+	// Creds is set once the login produced a usable session.
+	Creds *credentials
+	// Status is "waiting" until Creds is set.
+	Status string
 }
 
 // pendingLoginStore holds in-flight logins, keyed by state.
@@ -57,6 +61,34 @@ func (s *pendingLoginStore) take(state string) *pendingLogin {
 	}
 	delete(s.items, state)
 	return p
+}
+
+// complete records the credential a finished login produced.
+//
+// 轮询看到它就会把登录判为成功。手机号登录有两条路：页面直接写 auth 文件，
+// 以及这里记录的会话结果；两条都成功才算一次性完成，任一条落后也不会丢账号。
+func (s *pendingLoginStore) complete(state string, creds *credentials) {
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry, ok := s.items[state]; ok {
+		entry.Creds = creds
+		entry.Status = "success"
+	}
+}
+
+// peek returns the entry without consuming it.
+//
+// 短信登录分两步：先发码、再校验。发码那一步不能把 state 消费掉，否则用户填完
+// 验证码回来就找不到这次登录了。
+func (s *pendingLoginStore) peek(state string) *pendingLogin {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireLocked()
+	return s.items[state]
 }
 
 func (s *pendingLoginStore) expireLocked() {

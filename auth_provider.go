@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -246,10 +247,11 @@ func authFileNameFor(c *credentials) string {
 
 // authLoginStart answers auth.login.start.
 //
-// Both realms authenticate by browser sign-in, so there is no callback to
-// receive and no device code to display. The flow hands the user the sign-in URL
-// and the steps for copying the cookie back; the state token ties the follow-up
-// poll to this realm.
+// 登录改成插件自己的页面，而不是让用户去浏览器里翻 Cookie。URL 指向插件的
+// 登录表单，state 把后续的轮询绑到这一次登录上。
+//
+// 与 tinker 的做法一致：CPA 的 OAuth 弹窗只能收一个「回调 URL 或授权码」，
+// 装不下手机号和验证码两步，所以整个交互由插件页面承担。
 func authLoginStart(request []byte) ([]byte, error) {
 	var req pluginapi.AuthLoginStartRequest
 	if len(request) > 0 {
@@ -262,7 +264,9 @@ func authLoginStart(request []byte) ([]byte, error) {
 	if r == "" {
 		r = state.settings.get().RealmDefault
 	}
-	profile := profileFor(r)
+	if r == "" {
+		r = realmDoubao
+	}
 
 	// The state must satisfy CPA's ValidateOAuthState, which allows only
 	// [A-Za-z0-9._-]. A separator such as ':' is rejected outright with
@@ -270,24 +274,24 @@ func authLoginStart(request []byte) ([]byte, error) {
 	loginState := string(r) + "-" + randomUUID()
 	pendingLogins.put(loginState, &pendingLogin{Realm: r})
 
-	host := strings.TrimPrefix(profile.CookieDomain, ".")
 	return okEnvelope(pluginapi.AuthLoginStartResponse{
 		Provider:  pluginName,
-		URL:       profile.Host + "/chat/",
+		URL:       loginPageURL(loginState),
 		State:     loginState,
 		ExpiresAt: time.Now().Add(pendingLoginTTL),
 		Metadata: map[string]any{
-			"realm": string(r),
-			"instructions": fmt.Sprintf(
-				"1. 在浏览器中打开 %s 并完成登录。\n"+
-					"2. 按 F12 打开开发者工具，切到 Network 并刷新页面。\n"+
-					"3. 点击任意一条 %s 的请求，在 Request Headers 里找到 Cookie。\n"+
-					"4. 复制 Cookie 的完整值（不要带 “Cookie:” 前缀），粘贴回这里。\n\n"+
-					"注意：必须是登录后的完整 Cookie，其中要包含 flow_cur_user_sec_id 与 sessionid。",
-				profile.Host, host,
-			),
+			"realm":        string(r),
+			"display_name": pluginDisplayName,
+			"state":        loginState,
+			"hint":         "在打开的页面里填手机号和短信验证码，登录成功后回到本窗口点确认即可。",
 		},
 	})
+}
+
+// loginPageURL keeps the URL relative so a remote browser resolves it against the
+// origin it is already using — CPA's own base is 127.0.0.1 on a server.
+func loginPageURL(state string) string {
+	return "/v0/resource/plugins/" + pluginName + "/login?state=" + state
 }
 
 // authVariantHint reads a realm hint off the login request.
@@ -315,26 +319,11 @@ func authVariantHint(req pluginapi.AuthLoginStartRequest) string {
 
 // authLoginPoll answers auth.login.poll.
 //
-// The pasted cookies arrive here by one of two routes, and both are checked because
-// which one applies depends on how CPA drives the flow:
+// 登录页提交后，验证码与手机号经 metadata 到达这里，插件用它换登录态。轮询本身
+// 是 CPA 驱动的，所以没有提交时返回 pending，页面还在等用户输入。
 //
-//	metadata  — when the panel hands the value to the poll directly
-//	callback  — when the user pastes into CPA's OAuth callback box
-//
-// The callback route is the one that matters in practice. CPA's management UI turns
-// every plugin login into an OAuth-shaped flow: it shows a "paste the callback URL or
-// code" box, and what the user types there is written to
-//
-//	<AuthDir>/.oauth-<provider>-<state>.oauth   {"code":"…","state":"…"}
-//
-// Deliberately, CPA does not care what the value is — it is opaque to the host and
-// meaningful only to the plugin. So the box that is labelled for an OAuth code is
-// where a Doubao cookie has to go, and reading that file is what makes the flow work
-// with an upstream that has no OAuth at all.
-//
-// The credential is validated against the live upstream before it is accepted, so a
-// stale or partial copy fails immediately with a specific message instead of
-// producing an account that fails every later request.
+// 同时保留直接粘 Cookie 的路径（callback 文件）：如果用户从别处导入了 Cookie，
+// 仍然能通过 CPA 的 OAuth 回调框落地，不必强迫所有人走短信。
 func authLoginPoll(request []byte) ([]byte, error) {
 	var req pluginapi.AuthLoginPollRequest
 	if len(request) > 0 {
@@ -343,16 +332,45 @@ func authLoginPoll(request []byte) ([]byte, error) {
 		}
 	}
 
-	// Prefer the callback file: on the callback route the metadata holds no
-	// credential, and reading a stale metadata value would mask a fresh paste.
+	pending := pendingLogins.peek(req.State)
+	r := realmDoubao
+	if pending != nil && pending.Realm != "" {
+		r = pending.Realm
+	}
+	// 登录页已经完成了这次登录：直接回报，不再等 metadata。
+	if pending != nil && pending.Creds != nil {
+		pendingLogins.take(req.State)
+		return okEnvelope(pluginapi.AuthLoginPollResponse{
+			Status: pluginapi.AuthLoginStatusSuccess,
+			Auth:   authDataFor(pending.Creds),
+		})
+	}
+
+	// ---- 手机号 + 验证码 ----
+	phone := strings.TrimSpace(metaString(req.Metadata, "phone", "mobile", "username"))
+	code := strings.TrimSpace(metaString(req.Metadata, "code", "verify_code", "otp"))
+
+	if phone != "" && code != "" {
+		return completePhoneLogin(req, r, phone, code)
+	}
+	if phone != "" && code == "" {
+		// 表单第一步只交了手机号：发码，然后继续等验证码。
+		if errSend := sendLoginCode(context.Background(), r, phone); errSend != nil {
+			return okEnvelope(pluginapi.AuthLoginPollResponse{
+				Status:  pluginapi.AuthLoginStatusError,
+				Message: "发送验证码失败：" + errSend.Error(),
+			})
+		}
+		logInfo("doubao: 已向 " + maskPhone(phone) + " 发送登录验证码")
+		return okEnvelope(pluginapi.AuthLoginPollResponse{
+			Status:  pluginapi.AuthLoginStatusPending,
+			Message: "验证码已发送，请在登录页填入",
+		})
+	}
+
+	// ---- 直接粘贴 Cookie 的兼容路径 ----
 	callbackCode := strings.TrimSpace(readOAuthCallbackCode(req.State, req.Host.AuthDir))
 	metaMaterial := strings.TrimSpace(pollMaterial(req))
-
-	logInfo(fmt.Sprintf("doubao: poll state=%q auth_dir=%q callback=%t(%d) metadata=%t(%d)",
-		req.State, req.Host.AuthDir,
-		callbackCode != "", len(callbackCode),
-		metaMaterial != "", len(metaMaterial)))
-
 	material := callbackCode
 	if material == "" {
 		material = metaMaterial
@@ -360,11 +378,9 @@ func authLoginPoll(request []byte) ([]byte, error) {
 	if material == "" {
 		return okEnvelope(pluginapi.AuthLoginPollResponse{
 			Status:  pluginapi.AuthLoginStatusPending,
-			Message: "等待粘贴 Cookie…",
+			Message: "等待在登录页填入手机号与验证码…",
 		})
 	}
-
-	pending := pendingLogins.take(req.State)
 
 	creds, errExtract := extractCredentials(pluginapi.AuthParseRequest{RawJSON: []byte(material)})
 	if errExtract != nil {
@@ -373,11 +389,8 @@ func authLoginPoll(request []byte) ([]byte, error) {
 			Message: errExtract.Error(),
 		})
 	}
-	if pending != nil && pending.Realm != "" {
-		creds.Realm = pending.Realm
-	}
 	if creds.Realm == "" {
-		creds.Realm = state.settings.get().RealmDefault
+		creds.Realm = r
 	}
 
 	// Validate against the live upstream. This is what distinguishes "the user
@@ -389,10 +402,8 @@ func authLoginPoll(request []byte) ([]byte, error) {
 			Message: "凭据校验失败：" + errProbe.Error(),
 		})
 	}
-
 	creds.applyLaunch(probe)
-
-	// Consume the callback file so a retry does not re-import the same value.
+	pendingLogins.take(req.State)
 	consumeOAuthCallback(req.State, req.Host.AuthDir)
 
 	return okEnvelope(pluginapi.AuthLoginPollResponse{
@@ -401,22 +412,76 @@ func authLoginPoll(request []byte) ([]byte, error) {
 	})
 }
 
-// readOAuthCallbackCode reads the value the user submitted to CPA's callback box.
+// completePhoneLogin exchanges a code for a session and stores it.
 //
-// The panel asks for a *callback URL*, not a bare value: CPA parses what the user
-// pastes with url.Query() and reads "state" and "code" out of it. Pasting a raw cookie
-// therefore fails inside CPA with "state is required", before the plugin is ever
-// consulted — which is exactly what a user sees when they follow the obvious
-// instruction to "paste the cookie".
+// 成功后 pendingLogins 里那条记录被消费掉，同一 state 不会重复登录。
+func completePhoneLogin(req pluginapi.AuthLoginPollRequest, r realm, phone string, code string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cookies, errLogin := loginWithCode(ctx, r, phone, code)
+	if errLogin != nil {
+		return okEnvelope(pluginapi.AuthLoginPollResponse{
+			Status:  pluginapi.AuthLoginStatusError,
+			Message: "登录失败：" + errLogin.Error(),
+		})
+	}
+
+	creds := &credentials{Realm: r, Cookies: cookies}
+	creds = creds.withDefaults()
+
+	// 登录成功后立刻确认这串 Cookie 真能调用上游，顺便拿到账号标识和昵称。
+	if probe, errProbe := probeCredential(creds); errProbe == nil {
+		creds.applyLaunch(probe)
+	} else {
+		logInfo("doubao: 短信登录成功，但探测账号失败：" + errProbe.Error())
+	}
+	if creds.Nickname == "" {
+		creds.Nickname = maskPhone(phone)
+	}
+
+	pendingLogins.take(req.State)
+	logInfo("doubao: 账号 " + creds.label() + " 短信登录成功")
+
+	return okEnvelope(pluginapi.AuthLoginPollResponse{
+		Status: pluginapi.AuthLoginStatusSuccess,
+		Auth:   authDataFor(creds),
+	})
+}
+
+// pollMaterial pulls the pasted cookie value out of the poll metadata.
 //
-// So two shapes are accepted here:
-//
-//	the callback file CPA writes when it could parse a state (the normal path)
-//	the submitted URL itself, re-read from the panel's own state key
-//
-// The second is a fallback for the case where CPA rejected the submission and never
-// wrote a file. It cannot help when CPA rejects the request outright, but it keeps the
-// plugin tolerant of either delivery.
+// 只在直接粘 Cookie 的兼容路径上用；短信登录用的是 phone/code 两个字段，
+// 所以这里跳过它们，避免把验证码当成 Cookie 去解析。
+func pollMaterial(req pluginapi.AuthLoginPollRequest) string {
+	for _, key := range []string{"cookies", "cookie", "raw", "raw_json", "content", "value"} {
+		if v, ok := req.Metadata[key]; ok {
+			if s, isStr := v.(string); isStr && strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+	}
+	// Some panels echo the material back in the state field itself.
+	if strings.Contains(req.State, "=") && strings.Contains(req.State, ";") {
+		return req.State
+	}
+	return ""
+}
+
+// metaString reads the first non-empty string among the given metadata keys.
+func metaString(metadata map[string]any, keys ...string) string {
+	for _, key := range keys {
+		v, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		if s, isStr := v.(string); isStr && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 func readOAuthCallbackCode(state, authDir string) string {
 	path := oauthCallbackPath(state, authDir)
 	if path == "" {
@@ -499,22 +564,6 @@ func oauthCallbackPath(state, authDir string) string {
 	}
 	file := fmt.Sprintf(".oauth-%s-%s.oauth", pluginName, state)
 	return filepath.Join(dir, file)
-}
-
-// pollMaterial pulls the pasted cookie value out of the poll metadata.
-func pollMaterial(req pluginapi.AuthLoginPollRequest) string {
-	for _, key := range []string{"cookies", "cookie", "raw", "raw_json", "content", "value", "code"} {
-		if v, ok := req.Metadata[key]; ok {
-			if s, isStr := v.(string); isStr && strings.TrimSpace(s) != "" {
-				return s
-			}
-		}
-	}
-	// Some panels echo the material back in the state field itself.
-	if strings.Contains(req.State, "=") && strings.Contains(req.State, ";") {
-		return req.State
-	}
-	return ""
 }
 
 // authRefresh answers auth.refresh.

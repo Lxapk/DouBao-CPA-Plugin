@@ -14,6 +14,7 @@
 | 深度思考 | ✅ 可用 | 思维链以 `reasoning_content` 返回 |
 | **图片生成** | ✅ 可用 | `/v1/images/generations`（`doubao/image`），也支持在 `/v1/chat/completions` 返回多模态 `image_url` |
 | **视频生成** | ✅ 可用 | `/v1/videos`（`doubao/video`），沿用返回里也带 URL 与 `media` 扩展 |
+| 手机号登录 | ✅ 可用 | 插件内填手机号收短信验证码，不需要复制 Cookie |
 | 双上游 | ✅ 可用 | 同一插件支持豆包与 Dola 两套账号 |
 | 会话列表 | ✅ 可用 | 自动获取会话，无需手工配置 |
 | 控制台面板 | ✅ 可用 | 账号 / 统计 / 说明 / 设置四页，与 Tinker 插件同一套界面 |
@@ -53,18 +54,18 @@ plugins:
 
 重启 CPA。CPA 必须是 **cgo 版本**（`CGO_ENABLED=1` 编译），否则无法加载插件。
 
-### 3. 授权
+### 3. 登录账号
 
-打开 CPA 管理面板 → 插件 → **豆包 / Dola**，在「账号」页底部的「在面板里授权」粘贴 Cookie。需要粘贴**登录后的完整 Cookie**：
+用手机号 + 短信验证码登录，不需要浏览器 Cookie：
 
-1. 浏览器打开 `www.doubao.com`（国内版）或 `www.dola.com`（国际版）并登录
-2. 按 `F12` → **Network** → 刷新页面
-3. 点任意一条该站点的请求 → **Request Headers** → 找到 `Cookie`
-4. 复制完整值（**不要带 `Cookie:` 前缀**）粘贴进来
+1. 打开 CPA 管理面板 → 插件 → **豆包 / Dola** → **账号** 页
+2. 在「添加账号」里选上游（豆包 / Dola），点 **打开登录页**
+3. 在打开的页面填手机号，点 **获取验证码**，收到短信后填入并 **登录**
+4. 回到账号页点 **刷新**，账号会出现在列表里
 
-**必须包含** `flow_cur_user_sec_id` 与 `sessionid`，否则网关认为会话无效。
+插件通过豆包的 passport 短信接口换取会话，拿到的是与网页端相同的登录态。会话到期后重新登录即可，同一账号重复登录会覆盖旧记录。
 
-Cookie 有效期见 `sid_guard`（豆包约 30 天）。
+> 也支持手工粘贴 Cookie（「或者粘贴 Cookie」），用于导入别处导出的会话，或登录接口被上游改动时兜底。
 
 ---
 
@@ -210,6 +211,8 @@ cabi.go               C ABI 入口（cgo trampoline）
 rpc.go                CPA RPC 方法路由
 realm.go              双上游抽象
 credentials.go        凭据模型与 Cookie 解析
+phone_login.go        手机号 + 短信验证码登录（passport 接口）
+login_page.go         登录页与表单接口
 completion.go         /chat/completion SSE 客户端
 conversation.go       流式执行器（文本 + 媒体）
 creation.go           CREATION block 解析

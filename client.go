@@ -201,6 +201,8 @@ func (c *client) launch(ctx context.Context) (*launchResult, error) {
 			AssistantBotID string        `json:"assistant_bot_id"`
 			Country        string        `json:"country"`
 			ModelList      []launchModel `json:"model_list"`
+			Nickname       string        `json:"nickname"`
+			UID            string        `json:"uid"`
 		} `json:"data"`
 	}
 
@@ -227,6 +229,8 @@ func (c *client) launch(ctx context.Context) (*launchResult, error) {
 		AssistantBotID: raw.Data.AssistantBotID,
 		Country:        raw.Data.Country,
 		Models:         raw.Data.ModelList,
+		Nickname:       raw.Data.Nickname,
+		UID:            raw.Data.UID,
 	}
 	return out, nil
 }
@@ -246,6 +250,10 @@ type launchResult struct {
 	AssistantBotID string
 	Country        string
 	Models         []launchModel
+	// Nickname and UID come from the same launch payload; they are used to name
+	// an account after a phone login, where the operator never typed a label.
+	Nickname string
+	UID      string
 }
 
 // postJSONInto posts to an /alice/* endpoint, which answers with a bare JSON

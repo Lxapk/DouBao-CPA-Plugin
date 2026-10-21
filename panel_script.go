@@ -62,6 +62,9 @@ func panelScript() string {
   var VIEW_KEY = "doubao-panel-view";
   var AUTH_REALM_KEY = "doubao-auth-realm";
   var API = "/v0/management";
+  // The login form is a resource route: it must be reachable without the
+  // management key, because the operator has not necessarily saved one yet.
+  var LOGIN_PATH = "/v0/resource/plugins/doubao/login";
 
   function storageGet(name) {
     try { return localStorage.getItem(name) || ""; } catch (e) { return ""; }
@@ -388,6 +391,13 @@ func panelScript() string {
         toast("已清除本地记录", "ok");
         setTimeout(reload, 400);
       }).catch(function (e) { toast(e.message, "bad"); });
+    },
+
+    openLogin: function () {
+      // 登录页自己处理手机号与验证码；这里只负责把上游带上并打开它。
+      var realm = segValue("authRealmSeg") || storageGet(AUTH_REALM_KEY) || "doubao";
+      storageSet(AUTH_REALM_KEY, realm);
+      window.open(LOGIN_PATH + "?realm=" + encodeURIComponent(realm), "_blank");
     },
 
     pickAuthRealm: function (value) {
