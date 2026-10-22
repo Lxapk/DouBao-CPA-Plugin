@@ -62,6 +62,8 @@ type creationAsset struct {
 	Publishable bool
 	// Kinds maps format name to URL for alternate encodings (heic, webp, …).
 	Kinds map[string]string
+	// Duration is the clip length in seconds, video only.
+	Duration int
 }
 
 // isVideo reports whether the asset is a video.
@@ -238,6 +240,9 @@ func assetFromVideo(item creationItem) (creationAsset, bool) {
 	}
 	if v.VideoInfo != nil && v.VideoInfo.URL != "" {
 		a.URL = v.VideoInfo.URL
+	}
+	if v.Duration > 0 {
+		a.Duration = int(v.Duration + 0.5)
 	}
 	if a.Key == "" && a.URL == "" {
 		return a, false

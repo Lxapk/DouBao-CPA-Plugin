@@ -206,7 +206,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedream-5.0-pro", Name: "Seedream 5.0 Pro", Kind: "图片",
 		Summary:  "专业出图，4 倍消耗。需要豆包订阅，额度不足时上游会拒绝。",
-		Params:   []string{"prompt：必填", "model_item_key：seedream_5.0_pro"},
+		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：seedream_5.0_pro"},
 		Endpoint: "/v1/images/generations",
 		Example: `{
   "model": "doubao/seedream-5.0-pro",
@@ -216,7 +216,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedream-5.0-flash", Name: "Seedream 5.0 Flash", Kind: "图片",
 		Summary:  "专业快速，速度快于 Pro，消耗更低。",
-		Params:   []string{"prompt：必填", "model_item_key：seedream_5.0"},
+		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：seedream_5.0"},
 		Endpoint: "/v1/images/generations",
 		Example: `{
   "model": "doubao/seedream-5.0-flash",
@@ -226,7 +226,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedream-4.5", Name: "Seedream 4.5", Kind: "图片",
 		Summary:  "日常生成，网页端默认选中的就是它。",
-		Params:   []string{"prompt：必填", "model_item_key：seedream_4.5"},
+		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：seedream_4.5"},
 		Endpoint: "/v1/images/generations",
 		Example: `{
   "model": "doubao/seedream-4.5",
@@ -236,7 +236,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedream-4.0", Name: "Seedream 4.0", Kind: "图片",
 		Summary:  "基础生图，兼容性最好。",
-		Params:   []string{"prompt：必填", "model_item_key：seedream_4.0"},
+		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：seedream_4.0"},
 		Endpoint: "/v1/images/generations",
 		Example: `{
   "model": "doubao/seedream-4.0",
@@ -248,7 +248,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "video", Name: "视频生成（默认）", Kind: "视频",
 		Summary:  "用账号默认的视频模型。",
-		Params:   []string{"prompt：必填", "具体模型见下面几个 Seedance 别名"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "具体模型见下面几个 Seedance 别名"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/video",
@@ -258,7 +258,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedance-2.5", Name: "Seedance 2.5", Kind: "视频",
 		Summary:  "旗舰视频标杆，5 倍消耗。人像生成需先完成分身认证。",
-		Params:   []string{"prompt：必填", "seconds：可选，仅回显", "model_item_key：seedance_2.5"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选，会写进生成要求", "model_item_key：seedance_2.5"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/seedance-2.5",
@@ -269,7 +269,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedance-2.0", Name: "Seedance 2.0", Kind: "视频",
 		Summary:  "进阶画面表现，2 倍消耗。人像生成需先完成分身认证。",
-		Params:   []string{"prompt：必填", "model_item_key：seedance_2.0"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：seedance_2.0"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/seedance-2.0",
@@ -280,7 +280,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedance-2.0-fast", Name: "Seedance 2.0 Fast", Kind: "视频",
 		Summary:  "快速出片选择，等待时间短。",
-		Params:   []string{"prompt：必填", "model_item_key：seedance_2.0_fast"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：seedance_2.0_fast"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/seedance-2.0-fast",
@@ -290,7 +290,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedance-2.0-mini", Name: "Seedance 2.0 Mini", Kind: "视频",
 		Summary:  "日常生成使用，消耗最低。",
-		Params:   []string{"prompt：必填", "model_item_key：seedance_2.0_mini"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：seedance_2.0_mini"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/seedance-2.0-mini",
@@ -390,6 +390,31 @@ func renderGuideView() string {
 		`（<code>tos-cn-i-…</code>）。前三种由插件先上传到豆包再发送，最后一种直接使用。</div>`)
 	b.WriteString(`</div></div>`)
 
+	// ---- video polling ----
+	// 视频要几十秒到十分钟，一次请求等不到结果，所以这里把"提交 + 轮询"写清楚；
+	// 只给一个请求示例会让人以为它能同步返回。
+	b.WriteString(`<div class="group-head"><h2>视频：提交与轮询</h2>` +
+		`<span class="desc">生成要 5–10 分钟，提交后按 id 轮询</span></div>`)
+	b.WriteString(`<div class="box"><div class="pad">`)
+	b.WriteString(`<pre class="code"># 1. 提交，立刻返回 queued
+curl -s http://127.0.0.1:8317/v1/videos \
+  -H "Authorization: Bearer $KEY" \
+  -d '{"model":"doubao/seedance-2.0-fast","prompt":"一只橘猫走过草地",
+       "aspect_ratio":"16:9","seconds":5}'
+
+# {"id":"video-3f2a…","status":"queued","progress":0,"seconds":"5"}
+
+# 2. 轮询，直到 status 变成 completed
+curl -s http://127.0.0.1:8317/v1/videos/video-3f2a… \
+  -H "Authorization: Bearer $KEY"
+
+# {"id":"video-3f2a…","status":"in_progress","progress":0}
+# {"id":"video-3f2a…","status":"completed","progress":100,
+#  "video":{"url":"https://…mp4"}}</pre>`)
+	b.WriteString(`<div class="note" style="margin-top:10px">提交时会话可能先回一段参数确认（模型、时长、比例），` +
+		`这是上游 agent 的正常行为；任务在后台继续跑，轮询会看到它变成 <code>completed</code>。</div>`)
+	b.WriteString(`</div></div>`)
+
 	b.WriteString(`<div class="group-head"><h2>已知限制</h2></div>`)
 	b.WriteString(`<div class="box"><div class="pad">`)
 	for _, line := range []string{
@@ -398,6 +423,7 @@ func renderGuideView() string {
 		"流式不是逐 token —— 上游确实流式推送，但媒体结果是整块到达的。",
 		"每请求复用账号最近的会话，并替换其内容；副作用是该会话在上游 UI 中会累积记录。",
 		"生图 / 生视频消耗账号额度；图片地址是带时效的签名直链，<code>media[].key</code> 才是稳定标识。",
+		"视频是异步任务：提交后立刻返回 <code>queued</code>，客户端用返回的 <code>id</code> 轮询才拿到 <code>completed</code> 与地址。生成通常要 5–10 分钟，别指望一次请求就等到结果。",
 	} {
 		b.WriteString(`<div class="note" style="margin:5px 0;line-height:1.7">· ` + line + `</div>`)
 	}

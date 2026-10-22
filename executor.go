@@ -314,53 +314,55 @@ func executeImageOnce(creds *credentials, chat *chatRequest) (map[string]any, er
 // — the same id keeps answering "completed" — and a client that reads the URL
 // directly gets it immediately.
 func executeVideoOnce(creds *credentials, chat *chatRequest) (map[string]any, error) {
-	// A status poll names a job that already finished. Answering it from the store
-	// is what keeps one generation from becoming one per poll.
+	// 状态轮询：任务已登记就直接报真实状态。
+	//
+	// 还在生成时返回 in_progress 而不是报错，客户端据此继续轮询 —— 这正是
+	// 把长等待从单个 HTTP 请求里挪出来的关键。
 	if chat.RequestID != "" {
-		if job, ok := videoJobs.get(chat.RequestID); ok {
-			return videoJobPayload(chat.RequestID, job), nil
+		job, ok := videoJobs.get(chat.RequestID)
+		if !ok {
+			return nil, fmt.Errorf("找不到视频任务 %s：结果只保存在内存中，重启后需要重新生成", chat.RequestID)
 		}
-		return nil, fmt.Errorf("找不到视频任务 %s：结果只保存在内存中，重启后需要重新生成", chat.RequestID)
-	}
-
-	_, assets, errRun := executeOnceWithMedia(creds, chat, nil)
-	if errRun != nil {
-		return nil, errRun
-	}
-
-	var video creationAsset
-	for _, asset := range assets {
-		if asset.URL != "" && asset.isVideo() {
-			video = asset
-			break
+		if job.Status == jobCompleted {
+			videoJobs.update(job.ID, func(j *videoJob) {})
 		}
-	}
-	if video.URL == "" {
-		// Some captures report a clip without the video flag; a URL that is not a
-		// still image is still the answer.
-		for _, asset := range assets {
-			if asset.URL != "" {
-				video = asset
-				break
-			}
-		}
-	}
-	if video.URL == "" {
-		return nil, errors.New("上游没有返回视频")
+		return videoJobPayload(job, videoJobSeconds(job, chat.Seconds)), nil
 	}
 
-	job := newVideoJobID()
-	videoJobs.putWithModel(job, video.URL, chat.Model)
-
-	payload := videoJobPayload(job, videoJob{URL: video.URL, Model: chat.Model, CreatedAt: time.Now()})
-	seconds := normalizeSeconds(chat.Seconds)
-	if seconds <= 0 {
-		seconds = 4
+	prompt, errPrompt := chat.promptText()
+	if errPrompt != nil {
+		return nil, errPrompt
 	}
-	// The duration is advisory: the upstream decides the real clip length, so the
-	// requested value is echoed rather than measured.
-	payload["seconds"] = fmtInt64(int64(seconds))
-	return payload, nil
+	if strings.TrimSpace(prompt) == "" {
+		return nil, errors.New("请求中没有可发送的内容")
+	}
+
+	mode := modeForRequest(chat)
+	// 比例与时长由 agent 在规划阶段决定，只能通过提示词传达。
+	prompt = withGenerationHints(prompt, mode.Kind, chat)
+
+	// 提交后立即返回，生成在后台进行。
+	job := videoJobs.submit(videoJob{
+		ID:      newVideoJobID(),
+		Model:   chat.Model,
+		Seconds: normalizeSeconds(chat.Seconds),
+		creds:   creds,
+		prompt:  prompt,
+		mode:    mode,
+	})
+	logInfo(fmt.Sprintf("doubao: 视频任务已提交 %s（%s）", job.ID, chat.Model))
+	return videoJobPayload(job, job.Seconds), nil
+}
+
+// videoJobSeconds 取出返回给客户端的时长。
+func videoJobSeconds(job videoJob, requested int) int {
+	if job.Seconds > 0 {
+		return job.Seconds
+	}
+	if v := normalizeSeconds(requested); v > 0 {
+		return v
+	}
+	return 4
 }
 
 // Each payload is an OpenAI chat.completion.chunk object without SSE framing: the

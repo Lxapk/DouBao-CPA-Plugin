@@ -32,8 +32,8 @@ func renderLoginPage(state string) string {
 	b.WriteString(`<title>` + pluginDisplayName + ` 登录</title><style>` + uiCSS + `</style></head><body>`)
 	b.WriteString(`<div class="shell"><header class="page-header">`)
 	b.WriteString(`<h1>` + pluginDisplayName + ` 登录</h1>`)
-	b.WriteString(`<p class="desc">用手机号接收短信验证码。登录成功后这个页面会提示完成，` +
-		`回到 CPA 的授权窗口点确认即可。</p></header>`)
+	b.WriteString(`<p class="desc">用手机号接收短信验证码。登录成功后账号即刻写入，` +
+		`可以回到控制台继续，也可以在这里接着登录下一个账号。</p></header>`)
 	b.WriteString(`<main class="main">`)
 
 	b.WriteString(`<div class="box"><header><h3>手机号登录</h3>`)
@@ -58,6 +58,13 @@ func renderLoginPage(state string) string {
 	b.WriteString(`</div>`)
 
 	b.WriteString(`<div id="loginResult" style="margin-top:14px"></div>`)
+
+	// 登录完成后才显示：一个原地重开一次登录，一个回到控制台。
+	// 没有这两个出口，用户登录完只能自己关标签页，也不知道账号到底进去没有。
+	b.WriteString(`<div class="row" id="afterLogin" style="margin-top:14px;gap:8px" hidden>`)
+	b.WriteString(`<button type="button" class="primary" data-call="backToPanel">回到控制台</button>`)
+	b.WriteString(`<button type="button" data-call="loginAgain">继续登录另一个账号</button>`)
+	b.WriteString(`</div>`)
 
 	b.WriteString(`<div class="group-head" style="margin:20px 0 8px"><h2>说明</h2></div>`)
 	for _, line := range []string{
@@ -90,6 +97,7 @@ func loginPageScript(state string) string {
   // itself was served from: CPA's resource handler only accepts GET (anything
   // else 404s), and these two calls must be POSTs.
   var MGMT = "/v0/management/` + pluginName + `";
+  var PANEL_PATH = "/v0/resource/plugins/` + pluginName + `/panel";
   var PANEL_KEY = "cpa-management-key";
 
   function managementKey() {
@@ -182,12 +190,22 @@ func loginPageScript(state string) string {
     post("/login/verify", { state: STATE, phone: p, code: c }).then(function (data) {
       if (data && data.ok) {
         note("登录成功", "ok");
-        result("<div><b>登录成功</b></div><div class=\"note\">" +
-          esc(data.message || "回到 CPA 的授权窗口点确认即可。") + "</div>", "ok");
+        var lines = ["<div><b>登录成功</b></div>"];
+        if (data.label) lines.push("<div class=\"note\">账号：" + esc(data.label) + "</div>");
+        if (data.realm) lines.push("<div class=\"note\">上游：" + esc(data.realm) + "</div>");
+        lines.push("<div class=\"note\">" + esc(data.message || "账号已写入，可以直接使用。") + "</div>");
+        lines.push("<div class=\"note\">下面可以回到控制台，或继续登录另一个账号。</div>");
+        result(lines.join(""), "ok");
+
         var phoneEl = document.getElementById("phone");
         var codeEl = document.getElementById("code");
         if (phoneEl) phoneEl.disabled = true;
         if (codeEl) codeEl.disabled = true;
+        if (btn) { btn.disabled = true; btn.textContent = "已登录"; }
+        showAfterLogin(true);
+        // 通知发起这次登录的控制台刷新账号列表。控制台是另一个窗口，
+        // 不通知的话它要等用户手动点刷新才看得到新账号。
+        notifyParent();
       } else {
         note((data && data.message) || "登录失败", "bad");
         result(esc((data && data.message) || "登录失败"), "bad");
@@ -196,8 +214,48 @@ func loginPageScript(state string) string {
       note(e.message, "bad");
       result(esc(e.message), "bad");
     }).then(function () {
-      if (btn) { btn.disabled = false; btn.textContent = "登录"; }
+      // 成功时按钮已经改成「已登录」，这里只恢复失败的情况。
+      if (btn && !btn.disabled) { btn.textContent = "登录"; }
     });
+  }
+
+  /* ---------- after login ---------- */
+
+  function showAfterLogin(show) {
+    var el = document.getElementById("afterLogin");
+    if (el) el.hidden = !show;
+  }
+
+  // 控制台如果是从本页打开的，就通知它刷新；跨源或没有 opener 时静默跳过。
+  function notifyParent() {
+    try {
+      if (window.opener && !window.opener.closed && window.opener.__doubaoLoginDone) {
+        window.opener.__doubaoLoginDone();
+      }
+    } catch (e) { /* 跨源时读不到，忽略 */ }
+  }
+
+  function backToPanel() {
+    // 从控制台打开的就关掉自己，让控制台回到前台；直接打开时跳到控制台。
+    try {
+      if (window.opener && !window.opener.closed) { window.close(); return; }
+    } catch (e) { /* 跨源读不到 opener，走跳转 */ }
+    location.href = PANEL_PATH;
+  }
+
+  function loginAgain() {
+    // 原地重开一次登录：清空输入、解禁控件、清掉结果，重新发码。
+    // 换 state 是不必要的 —— 上一笔已经 consum 掉了，这里继续用同一个会话
+    // 只为让 realm 判断保持同一个上游。
+    var phoneEl = document.getElementById("phone");
+    var codeEl = document.getElementById("code");
+    var btn = document.getElementById("loginBtn");
+    if (phoneEl) { phoneEl.disabled = false; phoneEl.value = ""; phoneEl.focus(); }
+    if (codeEl) { codeEl.disabled = false; codeEl.value = ""; }
+    if (btn) { btn.disabled = false; btn.textContent = "登录"; }
+    result("");
+    note("");
+    showAfterLogin(false);
   }
 
   function esc(s) {
@@ -221,6 +279,8 @@ func loginPageScript(state string) string {
       var action = el.dataset ? el.dataset.call : null;
       if (action === "sendCode") { ev.preventDefault(); sendCode(); return; }
       if (action === "submitLogin") { ev.preventDefault(); submitLogin(); return; }
+      if (action === "backToPanel") { ev.preventDefault(); backToPanel(); return; }
+      if (action === "loginAgain") { ev.preventDefault(); loginAgain(); return; }
       el = el.parentNode;
     }
   });

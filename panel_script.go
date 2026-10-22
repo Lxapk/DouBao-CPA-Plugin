@@ -43,11 +43,12 @@ func panelScript() string {
       try { theme = new URLSearchParams(location.search).get("theme") || ""; } catch (e) { theme = ""; }
     }
     var root = document.documentElement;
-    if (theme === "dark" || theme === "white" || theme === "light") {
-      root.setAttribute("data-theme", theme);
-    } else {
-      root.removeAttribute("data-theme");
-    }
+    // 原样透传，交给 CSS 决定用哪套配色。
+    //
+    // 这里不再白名单过滤：host 新增一个主题（black、kraft…）时，写死列表会让
+    // 面板悄悄退回暗色。取值为空才是"跟随系统"，此时移除属性让 media query 生效。
+    if (theme) root.setAttribute("data-theme", theme);
+    else root.removeAttribute("data-theme");
   }
 
   adoptHostTheme();
@@ -154,6 +155,15 @@ func panelScript() string {
   }
 
   function reload() { location.reload(); }
+
+  // 登录页在自己被打开时会回调这里，让新账号立刻出现在列表里。
+  window.__doubaoLoginDone = function () {
+    try {
+      showView("view-accounts");
+      loadAccounts();
+      toast("账号已添加", "ok");
+    } catch (e) { /* 页面结构变了就算了，不影响登录本身 */ }
+  };
 
   /* ---------- tabs ---------- */
 
@@ -394,7 +404,11 @@ func panelScript() string {
     },
 
     openLogin: function () {
-      // 登录页自己处理手机号与验证码；这里只负责把上游带上并打开它。
+      // 两个入口共用：表头的「添加账号」展开表单并直接开登录页；
+      // 表单里的「打开登录页」只开页面。先展开再打开，用户关掉登录页
+      // 回到控制台时能看到表单，而不是面对一个什么都没有的页面。
+      var section = document.getElementById("authSection");
+      if (section) section.hidden = false;
       var realm = segValue("authRealmSeg") || storageGet(AUTH_REALM_KEY) || "doubao";
       storageSet(AUTH_REALM_KEY, realm);
       window.open(LOGIN_PATH + "?realm=" + encodeURIComponent(realm), "_blank");

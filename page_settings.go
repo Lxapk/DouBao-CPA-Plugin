@@ -50,7 +50,16 @@ func renderSettingsView() string {
 	b.WriteString(`<div class="box"><div class="pad">`)
 	b.WriteString(`<div class="row" style="gap:26px;flex-wrap:wrap;font-size:13px">`)
 	b.WriteString(`<span class="note">版本 <b class="mono">` + pluginVersion + `</b></span>`)
+	b.WriteString(`<span class="note">默认上游 <b class="mono">` +
+		html.EscapeString(string(settings.RealmDefault)) + `</b></span>`)
 	b.WriteString(`<span class="note">数据目录 <b class="mono">` + html.EscapeString(pluginStateDir()) + `</b></span>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`<div class="row" style="gap:26px;flex-wrap:wrap;font-size:13px;margin-top:10px">`)
+	for _, r := range allRealms {
+		profile := profileFor(r)
+		b.WriteString(`<span class="note">` + realmLabel(r) + ` <b class="mono">` +
+			htmlEscape(profile.Host) + `</b></span>`)
+	}
 	b.WriteString(`</div></div></div>`)
 
 	b.WriteString(`</section>`)
@@ -189,7 +198,7 @@ func renderCallBox(settings pluginSettings) string {
 		{
 			"setMedia", "media_poll_seconds",
 			"等待图片 / 视频（秒）",
-			"生成图片或视频愿意等待的最长时间。生成远比文本慢，默认给到 10 分钟。",
+			"生成图片或视频愿意等待的最长时间。视频走异步任务，这里的预算作用于后台生成，不影响提交接口的响应速度。",
 			settings.MediaPollSeconds,
 		},
 		{
@@ -202,7 +211,8 @@ func renderCallBox(settings pluginSettings) string {
 		b.WriteString(`<div class="pad" style="padding-bottom:0"><div class="row" style="align-items:flex-end">`)
 		b.WriteString(`<div style="flex:1 1 260px;min-width:0">`)
 		b.WriteString(`<div class="note" style="margin-bottom:6px">` + row.label + `</div>`)
-		b.WriteString(`<div class="note" style="color:var(--text-quaternary);margin-bottom:8px">` + row.desc + `</div>`)
+		// 次级文字色：这是要读的说明，不是占位符。
+		b.WriteString(`<div class="note" style="color:var(--text-tertiary);margin-bottom:8px">` + row.desc + `</div>`)
 		b.WriteString(`</div>`)
 		b.WriteString(`<div class="btn-end" style="flex:0 0 auto">`)
 		b.WriteString(fmt.Sprintf(`<input type="number" id="%s" value="%d" min="1" style="width:110px">`, row.id, row.value))

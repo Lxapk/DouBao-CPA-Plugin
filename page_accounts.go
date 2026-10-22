@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"html"
 	"strings"
 )
@@ -30,9 +31,12 @@ func renderAccountsView() string {
 	b.WriteString(`<section class="view" id="view-accounts">`)
 
 	b.WriteString(`<div class="stats">`)
+	// 四个格子：手机上统计条是两列，第五格会独占一行且空出半格。
+	// 两个上游的数量并进标签里，信息不丢。
 	statCard(&b, "", "账号总数", total)
 	statCard(&b, "good", "启用中", enabled)
-	statCard(&b, "warn", "国内版", countRealm(entries, realmDoubao))
+	statCard(&b, "warn", fmt.Sprintf("豆包 %d · Dola %d",
+		countRealm(entries, realmDoubao), countRealm(entries, realmDola)), "")
 	statCard(&b, "bad", "已停用", blocked)
 	b.WriteString(`</div>`)
 
@@ -40,13 +44,14 @@ func renderAccountsView() string {
 	b.WriteString(`<header><h3>账号 <span class="hint">授权后自动出现</span></h3>`)
 	b.WriteString(`<span class="grow"></span><span class="note" id="accountMsg"></span>`)
 	b.WriteString(`<button type="button" class="xs" data-call="refreshAccounts">刷新</button>`)
+	b.WriteString(`<button type="button" class="xs primary" data-call="openLogin">添加账号</button>`)
 	b.WriteString(`</header>`)
 
 	// The table is filled from /accounts on load and replaced after every action,
 	// so a row never shows a state the backend disagrees with.
 	b.WriteString(`<div id="acctWrap">`)
 	if total == 0 {
-		b.WriteString(`<div class="empty">还没有账号。展开下面的「添加账号」，用手机号登录。</div>`)
+		b.WriteString(`<div class="empty">还没有账号。点右上角「添加账号」，用手机号收验证码登录。</div>`)
 	} else {
 		b.WriteString(`<div class="tbl-wrap"><table><thead><tr>`)
 		b.WriteString(`<th>账号</th><th class="state">上游</th><th class="state">状态</th>`)
@@ -67,9 +72,12 @@ func renderAccountsView() string {
 		`</div>`)
 	b.WriteString(`</div>`)
 
+	// 「添加账号」区块默认收起：账号页的主任务是看账号状态，表单只在需要时展开。
+	b.WriteString(`<div id="authSection" hidden>`)
 	b.WriteString(`<div class="group-head"><h2>添加账号</h2>` +
 		`<span class="desc">手机号 + 短信验证码，不需要开浏览器翻 Cookie</span></div>`)
 	b.WriteString(renderAuthorisationBox())
+	b.WriteString(`</div>`)
 
 	b.WriteString(`</section>`)
 	return b.String()

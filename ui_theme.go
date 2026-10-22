@@ -4,9 +4,20 @@ package main
 //
 // The tokens, spacing and component shapes are the same as the Tinker plugin's, so
 // the two panels read as one product inside CPA rather than as two hand-rolled
-// apps. The theme follows the host: CPA writes data-theme="dark" or "white" on its
-// own root and removes the attribute when the operator picked "follow system", in
-// which case the media query decides.
+// apps. The theme follows the host: CPA writes data-theme on its own root and
+// removes the attribute when the operator picked "follow system", in which case
+// the media query decides.
+//
+// Four themes, in the host's own naming:
+//
+//	dark / black   the warm dark scale, black being a deeper variant
+//	white / light  pure white
+//	kraft / paper  the paper-toned light scale
+//
+// An unknown value must not fall back to dark: the panel would flip appearance
+// the moment the host adds a theme. The kraft palette is also the default for the
+// attribute-less case when the OS prefers light, so an unrecognised value still
+// lands on a readable surface.
 
 const uiCSS = `
 /* ======================= tokens ======================= */
@@ -60,6 +71,39 @@ const uiCSS = `
           "Microsoft YaHei", "Helvetica Neue", sans-serif;
 }
 
+/* "black" is the host's deeper dark: the same warm hue, pushed toward true black
+   for OLED screens. Only the surfaces and borders move; text keeps its contrast. */
+:root[data-theme="black"] {
+  color-scheme: dark;
+  --bg-secondary: #000000;
+  --bg-primary: #0a0a0a;
+  --bg-tertiary: #141414;
+  --bg-hover: #1c1c1c;
+  --bg-quinary: #050505;
+
+  --text-primary: #f2f0ed;
+  --text-secondary: #b8b2aa;
+  --text-tertiary: #8a847d;
+  --text-quaternary: #5e5952;
+
+  --border-color: #1f1f1f;
+  --border-primary: #2a2a2a;
+  --border-hover: #3a3a3a;
+
+  --primary-color: #8b8680;
+  --primary-hover: #9a948e;
+  --primary-active: #a6a099;
+  --primary-contrast: #ffffff;
+
+  --success-color: #10b981;
+  --warning-color: #c65746;
+  --error-color: #c65746;
+  --quota-medium-color: #ffd862;
+
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.6);
+  --shadow-lg: 0 14px 30px rgba(0, 0, 0, 0.7);
+}
+
 /* Explicit light choice from the host's theme switcher: pure white throughout. */
 :root[data-theme="white"],
 :root[data-theme="light"] {
@@ -89,6 +133,35 @@ const uiCSS = `
   --error-color: #c65746;
   --quota-medium-color: #e0aa14;
 
+  --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.08);
+  --shadow-lg: 0 10px 18px -3px rgb(0 0 0 / 0.1);
+}
+
+/* The paper-toned light scale. "Follow system" uses it when the OS prefers light,
+   and the host selects it explicitly as kraft or paper. */
+:root[data-theme="kraft"],
+:root[data-theme="paper"] {
+  color-scheme: light;
+  --bg-secondary: #faf9f5;
+  --bg-primary: #f0eee8;
+  --bg-tertiary: #e9e6df;
+  --bg-hover: #e2dfd7;
+  --bg-quinary: #f6f4ee;
+  --text-primary: #2d2a26;
+  --text-secondary: #6d6760;
+  --text-tertiary: #a29c95;
+  --text-quaternary: #c0bab3;
+  --border-color: #e3e1db;
+  --border-primary: #d5d2cb;
+  --border-hover: #cecac4;
+  --primary-color: #8b8680;
+  --primary-hover: #7f7a74;
+  --primary-active: #726d67;
+  --primary-contrast: #ffffff;
+  --success-color: #10b981;
+  --warning-color: #c65746;
+  --error-color: #c65746;
+  --quota-medium-color: #e0aa14;
   --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.08);
   --shadow-lg: 0 10px 18px -3px rgb(0 0 0 / 0.1);
 }
