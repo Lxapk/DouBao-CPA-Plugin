@@ -488,17 +488,18 @@ func buildStreamFrames(model, text, reasoning string, media []creationAsset) [][
 		appendDelta(map[string]any{"content": string(runes[idx:end])})
 	}
 
-	// Generated media cannot ride in a text delta, so it gets its own frames plus a
-	// text part carrying the URL.
+	// Generated media rides in delta.content as markdown, because that is the only
+	// field a standard OpenAI client renders. The structured form goes in the
+	// separate media field for clients that read dimensions and the resource key.
 	for _, asset := range media {
 		if asset.URL == "" {
 			continue
 		}
 		delta := map[string]any{"media": []map[string]any{mediaItem(asset)}}
 		if asset.isVideo() {
-			delta["content"] = "[video] " + asset.URL
+			delta["content"] = "\n\n[video](" + asset.URL + ")\n\n"
 		} else {
-			delta["content"] = ""
+			delta["content"] = "\n\n![" + assetAlt(asset) + "](" + asset.URL + ")\n\n"
 		}
 		appendDelta(delta)
 	}

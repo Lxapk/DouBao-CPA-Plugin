@@ -327,3 +327,11 @@ func (m *streamMessageContent) reasoningOf() string {
 	}
 	return b.String()
 }
+
+// assetAlt is the alt text for a generated image in markdown output.
+func assetAlt(a creationAsset) string {
+	if a.Model != "" {
+		return a.Model
+	}
+	return "image"
+}
