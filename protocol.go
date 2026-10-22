@@ -219,6 +219,16 @@ type conversationMessage struct {
 	IndexInConv    string          `json:"index_in_conv"`
 	CreateTime     string          `json:"create_time"`
 	Ext            json.RawMessage `json:"ext"`
+	// ContentBlock 是消息真正的内容。content 字段在已入库的消息里是空串，
+	// 文本和生成结果都在这里，块结构与流式事件一致。
+	ContentBlock []conversationBlock `json:"content_block"`
+}
+
+// conversationBlock 是存储消息里的一个内容块。
+type conversationBlock struct {
+	BlockType int             `json:"block_type"`
+	BlockID   string          `json:"block_id"`
+	Content   json.RawMessage `json:"content"`
 }
 
 // isBotReply reports whether the message came from the assistant.

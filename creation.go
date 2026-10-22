@@ -64,6 +64,8 @@ type creationAsset struct {
 	Kinds map[string]string
 	// Duration is the clip length in seconds, video only.
 	Duration int
+	// Vid 是视频在上游的标识，配合 download_url 使用。
+	Vid string
 }
 
 // isVideo reports whether the asset is a video.
@@ -121,19 +123,32 @@ type creationPlaceholder struct {
 type creationImageVariant struct {
 	URL        string            `json:"url"`
 	URI        string            `json:"uri"`
-	Width      int               `json:"width"`
-	Height     int               `json:"height"`
+	Width      flexibleInt       `json:"width"`
+	Height     flexibleInt       `json:"height"`
 	URLFormats map[string]string `json:"url_formats"`
 }
 
 // creationVideo is the video payload of a creation.
+// creationVideo 是一个视频产物。
+//
+// 视频和图片的字段不同：地址不在 url 里，而在 download_url；另外带 vid、
+// video_type 与尺寸。只读 url 会得到空串，这正是「生成成功却拿不到地址」的
+// 直接原因。
 type creationVideo struct {
-	Status    int                   `json:"status"`
-	Key       string                `json:"key"`
-	URL       string                `json:"url"`
-	Cover     *creationImageVariant `json:"cover"`
-	VideoInfo *creationImageVariant `json:"video_info"`
-	Duration  float64               `json:"duration"`
+	Status      int                   `json:"status"`
+	Key         string                `json:"key"`
+	URL         string                `json:"url"`
+	Vid         string                `json:"vid"`
+	DownloadURL string                `json:"download_url"`
+	VideoType   string                `json:"video_type"`
+	Cover       *creationImageVariant `json:"cover"`
+	VideoInfo   *creationImageVariant `json:"video_info"`
+	// Duration/Width/Height 的类型在两个上游之间不一致：豆包给字符串
+	// （"384"），Dola 给数字（384）。用灵活类型接，否则任何一个字段类型
+	// 对不上都会让整个 Unmarshal 失败，结果是「视频明明有，解析出来是 0 个」。
+	Duration flexibleFloat `json:"duration"`
+	Width    flexibleInt   `json:"width"`
+	Height   flexibleInt   `json:"height"`
 }
 
 // parseCreationBlock extracts every generated asset from a CREATION block body.
@@ -184,10 +199,10 @@ func assetFromImage(item creationItem) (creationAsset, bool) {
 		a.URL = img.ImageThumb.URL
 		a.Kinds = img.ImageThumb.URLFormats
 		if a.Width == 0 {
-			a.Width = img.ImageThumb.Width
+			a.Width = int(img.ImageThumb.Width)
 		}
 		if a.Height == 0 {
-			a.Height = img.ImageThumb.Height
+			a.Height = int(img.ImageThumb.Height)
 		}
 		if a.Key == "" {
 			a.Key = img.ImageThumb.URI
@@ -224,25 +239,33 @@ func assetFromVideo(item creationItem) (creationAsset, bool) {
 		Type:        2,
 		ID:          item.ID,
 		Key:         v.Key,
-		URL:         v.URL,
+		URL:         firstNonEmpty(v.URL, v.DownloadURL),
 		Status:      v.Status,
 		Publishable: item.CanPublish,
+		Width:       int(v.Width),
+		Height:      int(v.Height),
+		Vid:         v.Vid,
 	}
 	if v.Cover != nil {
-		// The cover doubles as the poster frame and as the fallback URL when the
-		// video itself is not addressable yet.
+		// 封面只是兜底：视频地址还没出来时先给一张图，好让调用方知道进度。
+		// 尺寸以视频本身为准，封面尺寸并不总等于成片尺寸，因此只在视频没给
+		// 尺寸时才拿它填。
 		if a.URL == "" {
 			a.URL = v.Cover.URL
 		}
 		a.Kinds = v.Cover.URLFormats
-		a.Width = v.Cover.Width
-		a.Height = v.Cover.Height
+		if a.Width == 0 {
+			a.Width = int(v.Cover.Width)
+		}
+		if a.Height == 0 {
+			a.Height = int(v.Cover.Height)
+		}
 	}
 	if v.VideoInfo != nil && v.VideoInfo.URL != "" {
 		a.URL = v.VideoInfo.URL
 	}
 	if v.Duration > 0 {
-		a.Duration = int(v.Duration + 0.5)
+		a.Duration = int(float64(v.Duration) + 0.5)
 	}
 	if a.Key == "" && a.URL == "" {
 		return a, false

@@ -368,8 +368,10 @@ func (c *client) pullChain(ctx context.Context, conversationID string, limit int
 		UplinkBody: uplinkBody{PullSingleChainBody: &pullSingleChainBody{
 			ConversationID:   conversationID,
 			ConversationType: conversationTypeOneToOneBot,
-			Direction:        0,
-			Limit:            limit,
+			// direction=1 才是往回翻历史。0 和 2 都返回空数组（实测），
+			// 空的 messages 看起来像「没有历史」，很容易被当成解析出错。
+			Direction: 1,
+			Limit:     limit,
 		}},
 	}
 	resp, errPost := c.post(ctx, "/im/chain/single", env, nil)

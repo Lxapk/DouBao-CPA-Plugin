@@ -13,7 +13,7 @@
 | 文本对话 | ✅ 可用 | `/v1/chat/completions`，支持流式 |
 | 深度思考 | ✅ 可用 | 思维链以 `reasoning_content` 返回 |
 | **图片生成** | ✅ 可用 | `/v1/images/generations`（`doubao/image`），也支持在 `/v1/chat/completions` 返回多模态 `image_url` |
-| **视频生成** | ✅ 可用 | `/v1/videos`（`doubao/video`），沿用返回里也带 URL 与 `media` 扩展 |
+| **视频生成** | ✅ 可用 | `/v1/videos`（`doubao/video`）。异步任务 + 轮询；上游中途断连时回查会话补读成片 |
 | 手机号登录 | ✅ 可用 | 插件内填手机号收短信验证码，登录完成可返回控制台或继续登录下一个账号 |
 | 图片输入 | ✅ 可用 | `image_url` 支持外链 / base64 / 本地路径 / 豆包资源 uri，自动上传 |
 | 比例 / 时长 | ✅ 可用 | `aspect_ratio`、`size`、`seconds` 会转成生成要求随提示词下发 |

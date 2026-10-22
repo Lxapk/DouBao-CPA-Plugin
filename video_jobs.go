@@ -50,6 +50,8 @@ type videoJob struct {
 	// prompt 与 mode 是后台执行的输入。
 	prompt string
 	mode   generationMode
+	// conversationID 是补读结果用的：流断开后要靠它回查会话。
+	conversationID string
 }
 
 type videoJobStore struct {
@@ -138,13 +140,19 @@ func runVideoJob(id string) {
 	}
 	videoJobs.update(id, func(j *videoJob) { j.Status = jobInProgress })
 
-	res, errRun := generateVideo(job.creds, job.prompt, job.mode)
+	res, errRun := generateVideo(job.creds, job.prompt, job.mode, job.conversationID)
 
 	videoJobs.update(id, func(j *videoJob) {
 		j.Finished = time.Now()
 		if errRun != nil {
 			j.Status = jobFailed
 			j.Error = errRun.Error()
+			return
+		}
+		if res.URL == "" {
+			j.Status = jobFailed
+			j.Error = "上游没有返回视频：生成已结束但会话里没有可用的片段地址。" +
+				"这类情况通常是额度不足或生成被上游拦截。"
 			return
 		}
 		j.Status = jobCompleted
@@ -162,39 +170,85 @@ type videoResult struct {
 	Seconds int
 }
 
-// generateVideo 跑一次真实生成。
-func generateVideo(creds *credentials, prompt string, mode generationMode) (videoResult, error) {
+// generateVideo 跑一次真实生成，并在流断开后回查会话拿结果。
+//
+// budget 是「等结果」的总预算，从发起请求算起；豆包生成视频通常要 5–10 分钟，
+// 期间 SSE 连接会先断掉，所以流结束不代表失败。
+func generateVideo(creds *credentials, prompt string, mode generationMode, knownConvID string) (videoResult, error) {
 	settings := state.settings.get()
 	budget := settings.MediaPollSeconds
 	if budget <= 0 {
-		budget = 600
+		budget = 900
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(budget+30)*time.Second)
+	deadline := time.Now().Add(time.Duration(budget) * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Until(deadline))
 	defer cancel()
 
-	conversationID := ""
-	if id, errConv := newClient(creds).latestConversationID(ctx); errConv == nil && id != "" {
-		conversationID = id
+	conversationID := strings.TrimSpace(knownConvID)
+	if conversationID == "" {
+		if id, errConv := newClient(creds).latestConversationID(ctx); errConv == nil && id != "" {
+			conversationID = id
+		}
 	}
+
 	result, errRun := runCompletionWithImages(ctx, creds, prompt, mode, conversationID, conversationID == "", nil, nil)
-	if errRun != nil {
+	// 流被上游断掉是常态：这里接着回查会话，而不是把它当失败返回。
+	if errRun != nil && !isStreamClosed(errRun) {
 		return videoResult{}, errRun
 	}
 
 	out := videoResult{Model: mode.ModelKey}
-	for _, asset := range result.assets {
-		if asset.URL == "" {
-			continue
-		}
-		// 视频优先，其次任何带地址的资产：部分抓包里片段不带 video 标记。
-		if asset.isVideo() {
-			out.URL = asset.URL
-			out.Seconds = asset.Duration
-		} else if out.URL == "" {
-			out.URL = asset.URL
+	if result != nil {
+		for _, asset := range result.assets {
+			if asset.URL == "" {
+				continue
+			}
+			if asset.isVideo() {
+				out.URL = asset.URL
+				out.Seconds = asset.Duration
+			} else if out.URL == "" {
+				out.URL = asset.URL
+			}
 		}
 	}
+	if out.URL != "" {
+		return out, nil
+	}
+
+	// 流里没有片段：说明连接在生成完成前就断了，回查会话等结果。
+	if conversationID == "" {
+		return out, nil
+	}
+	asset, ok := waitForVideoAsset(ctx, creds, conversationID, time.Until(deadline))
+	if !ok {
+		return out, nil
+	}
+	out.URL = asset.URL
+	out.Seconds = asset.Duration
+	if asset.Model != "" {
+		out.Model = asset.Model
+	}
 	return out, nil
+}
+
+// isStreamClosed 判断错误是不是「连接被上游关掉」。
+//
+// 视频生成时这是正常现象：上游先推一段文字，然后主动结束 SSE，成品稍后才在
+// 会话里出现。把它当失败会让每一次成功的生成都报错。
+func isStreamClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"unexpected eof", "eof", "connection reset", "stream error",
+		"context canceled", "context deadline exceeded", "broken pipe",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // videoJobPayload 把任务渲染成 CPA 视频端点的返回结构。

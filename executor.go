@@ -341,14 +341,22 @@ func executeVideoOnce(creds *credentials, chat *chatRequest) (map[string]any, er
 	// 比例与时长由 agent 在规划阶段决定，只能通过提示词传达。
 	prompt = withGenerationHints(prompt, mode.Kind, chat)
 
+	// 会话 id 要在提交前定下来：结果只出现在这个会话里，后台补读必须读同一个。
+	// 读列表失败不阻塞提交 —— 后台会再试一次。
+	conversationID := ""
+	if id, errConv := newClient(creds).latestConversationID(context.Background()); errConv == nil {
+		conversationID = id
+	}
+
 	// 提交后立即返回，生成在后台进行。
 	job := videoJobs.submit(videoJob{
-		ID:      newVideoJobID(),
-		Model:   chat.Model,
-		Seconds: normalizeSeconds(chat.Seconds),
-		creds:   creds,
-		prompt:  prompt,
-		mode:    mode,
+		ID:             newVideoJobID(),
+		Model:          chat.Model,
+		Seconds:        normalizeSeconds(chat.Seconds),
+		creds:          creds,
+		prompt:         prompt,
+		mode:           mode,
+		conversationID: conversationID,
 	})
 	logInfo(fmt.Sprintf("doubao: 视频任务已提交 %s（%s）", job.ID, chat.Model))
 	return videoJobPayload(job, job.Seconds), nil

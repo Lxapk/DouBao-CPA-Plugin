@@ -413,6 +413,10 @@ curl -s http://127.0.0.1:8317/v1/videos/video-3f2a… \
 #  "video":{"url":"https://…mp4"}}</pre>`)
 	b.WriteString(`<div class="note" style="margin-top:10px">提交时会话可能先回一段参数确认（模型、时长、比例），` +
 		`这是上游 agent 的正常行为；任务在后台继续跑，轮询会看到它变成 <code>completed</code>。</div>`)
+	b.WriteString(`<div class="note" style="margin-top:9px"><b>为什么必须轮询</b>：豆包生成视频时会先推一段文字，` +
+		`然后<b>主动断开连接</b>，成片要几分钟后才在会话里出现。连接断开不等于失败，` +
+		`插件在断开会回查会话（<code>PULL_SINGLE_CHAIN</code>）取结果，所以提交那次请求` +
+		`永远拿不到地址，只能靠轮询。</div>`)
 	b.WriteString(`</div></div>`)
 
 	b.WriteString(`<div class="group-head"><h2>已知限制</h2></div>`)
@@ -423,7 +427,7 @@ curl -s http://127.0.0.1:8317/v1/videos/video-3f2a… \
 		"流式不是逐 token —— 上游确实流式推送，但媒体结果是整块到达的。",
 		"每请求复用账号最近的会话，并替换其内容；副作用是该会话在上游 UI 中会累积记录。",
 		"生图 / 生视频消耗账号额度；图片地址是带时效的签名直链，<code>media[].key</code> 才是稳定标识。",
-		"视频是异步任务：提交后立刻返回 <code>queued</code>，客户端用返回的 <code>id</code> 轮询才拿到 <code>completed</code> 与地址。生成通常要 5–10 分钟，别指望一次请求就等到结果。",
+		"视频是异步任务：提交后立刻返回 <code>queued</code>，客户端用返回的 <code>id</code> 轮询才拿到 <code>completed</code> 与地址。生成通常要 5–10 分钟，且上游会中途断开连接 —— 断开会回查会话补读结果，所以别把断开当失败。",
 	} {
 		b.WriteString(`<div class="note" style="margin:5px 0;line-height:1.7">· ` + line + `</div>`)
 	}
