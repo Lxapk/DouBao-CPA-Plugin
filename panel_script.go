@@ -259,14 +259,6 @@ func panelScript() string {
     });
   }
 
-  function saveNumber(inputId, name, messageId) {
-    var el = document.getElementById(inputId);
-    if (!el) return;
-    var v = parseInt(el.value, 10);
-    if (isNaN(v) || v <= 0) { note(messageId, "请输入正整数", "bad"); return; }
-    setSetting(name, v, messageId);
-  }
-
   /* ---------- accounts ---------- */
 
   function renderAccounts(list) {
@@ -405,10 +397,6 @@ func panelScript() string {
       setSetting("expose_models", value === "on", "exposeMsg");
     },
 
-    saveNum: function (inputId, name) {
-      saveNumber(inputId, name, "callMsg");
-    },
-
     pickStrategy: function (value) {
       segSelect("strategySeg", value);
       var effect = document.getElementById("strategySegEffect");
@@ -429,10 +417,9 @@ func panelScript() string {
     },
 
     refreshUsage: function () {
-      if (!key()) { note("callMsg", "请先在「设置」里保存管理密钥", "bad"); return; }
-      note("callMsg", "刷新中…");
+      if (!key()) { toast("请先在「设置」里保存管理密钥", "bad"); return; }
       request("/calls").then(function () { reload(); })
-        .catch(function (e) { note("callMsg", e.message, "bad"); });
+        .catch(function (e) { toast(e.message, "bad"); });
     },
 
     clearCalls: function () {

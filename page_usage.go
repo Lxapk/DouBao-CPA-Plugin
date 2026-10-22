@@ -206,7 +206,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedream-5.0-pro", Name: "Seedream 5.0 Pro", Kind: "图片",
 		Summary:  "专业出图，4 倍消耗。需要豆包订阅，额度不足时上游会拒绝。",
-		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：seedream_5.0_pro"},
+		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：豆包 seedream50Pro / Dola seedream_5.0_global"},
 		Endpoint: "/v1/images/generations",
 		Example: `{
   "model": "doubao/seedream-5.0-pro",
@@ -216,7 +216,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedream-5.0-flash", Name: "Seedream 5.0 Flash", Kind: "图片",
 		Summary:  "专业快速，速度快于 Pro，消耗更低。",
-		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：seedream_5.0"},
+		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：豆包 seedream50Lite / Dola seedream_5.0_global"},
 		Endpoint: "/v1/images/generations",
 		Example: `{
   "model": "doubao/seedream-5.0-flash",
@@ -226,7 +226,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedream-4.5", Name: "Seedream 4.5", Kind: "图片",
 		Summary:  "日常生成，网页端默认选中的就是它。",
-		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：seedream_4.5"},
+		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：豆包 seedream_4.5 / Dola seedream_4.5_global"},
 		Endpoint: "/v1/images/generations",
 		Example: `{
   "model": "doubao/seedream-4.5",
@@ -236,7 +236,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedream-4.0", Name: "Seedream 4.0", Kind: "图片",
 		Summary:  "基础生图，兼容性最好。",
-		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：seedream_4.0"},
+		Params:   []string{"prompt：必填", "aspect_ratio：可选，会写进生成要求", "model_item_key：豆包 seedream_4.0 / Dola seedream_4.0_global"},
 		Endpoint: "/v1/images/generations",
 		Example: `{
   "model": "doubao/seedream-4.0",
@@ -258,7 +258,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedance-2.5", Name: "Seedance 2.5", Kind: "视频",
 		Summary:  "旗舰视频标杆，5 倍消耗。人像生成需先完成分身认证。",
-		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选，会写进生成要求", "model_item_key：seedance_2.5"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选，会写进生成要求", "model_item_key：豆包 seedance25 / Dola seedance_2.5"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/seedance-2.5",
@@ -269,7 +269,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedance-2.0", Name: "Seedance 2.0", Kind: "视频",
 		Summary:  "进阶画面表现，2 倍消耗。人像生成需先完成分身认证。",
-		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：seedance_2.0"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：豆包 seedance20Standard / Dola seedance_2.0_pc_dola"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/seedance-2.0",
@@ -280,7 +280,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedance-2.0-fast", Name: "Seedance 2.0 Fast", Kind: "视频",
 		Summary:  "快速出片选择，等待时间短。",
-		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：seedance_2.0_fast"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：豆包 seedance20Fast / Dola seedance_2.0_pc_dola"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/seedance-2.0-fast",
@@ -290,7 +290,7 @@ var guideCapabilities = []guideCapability{
 	{
 		Model: "seedance-2.0-mini", Name: "Seedance 2.0 Mini", Kind: "视频",
 		Summary:  "日常生成使用，消耗最低。",
-		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：seedance_2.0_mini"},
+		Params:   []string{"prompt：必填", "aspect_ratio / seconds：可选", "model_item_key：豆包 seedance20Mini / Dola seedance_2.0_pc_dola"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/seedance-2.0-mini",
@@ -368,6 +368,28 @@ func renderGuideView() string {
 	b.WriteString(`<div class="note" style="margin:-4px 0 14px">` +
 		`两个上游的账号彼此独立：豆包账号不能用于 Dola，反之亦然（会返回 ` +
 		`<code>710022003 CountryRestricted</code>）。</div>`)
+
+	// ---- login ----
+	// 两侧的 passport 不是同一套：豆包有独立账号中心，Dola 挂在站点本身，
+	// aid 也不同。写错过一次（拿豆包的 aid 去登 Dola，得到「该应用无权限」），
+	// 所以把这几个值摊开写清楚。
+	b.WriteString(`<div class="group-head"><h2>登录：两侧的 passport</h2>` +
+		`<span class="desc">手机号 + 短信验证码，接口与 aid 各不相同</span></div>`)
+	b.WriteString(`<div class="box"><div class="pad" style="padding:0">`)
+	b.WriteString(`<div class="tbl-wrap"><table><thead><tr>` +
+		`<th>上游</th><th>账号中心</th><th>aid</th><th>发码 / 登录接口</th></tr></thead><tbody>`)
+	for _, r := range allRealms {
+		profile := profileFor(r)
+		b.WriteString(fmt.Sprintf(
+			`<tr><td>%s</td><td><code>%s</code></td><td><code>%s</code></td>`+
+				`<td class="note mono">/passport/web/send_code/<br>/passport/web/sms_login/</td></tr>`,
+			realmLabel(r), htmlEscape(profile.PassportHost), profile.PassportAID,
+		))
+	}
+	b.WriteString(`</tbody></table></div></div></div>`)
+	b.WriteString(`<div class="note" style="margin:-4px 0 14px">` +
+		`走的是<b>网页版</b> passport 接口。App 侧的 <code>/passport/mobile/send_code/v1/</code> ` +
+		`按应用签名鉴权，第三方请求一律返回 <code>error_code 16 该应用无权限</code>。</div>`)
 
 	// ---- limits ----
 	b.WriteString(`<div class="group-head"><h2>图片输入</h2>` +

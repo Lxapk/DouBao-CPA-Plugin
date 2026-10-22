@@ -215,8 +215,12 @@ func readSourceForTest(t *testing.T, name string) string {
 // 请求形状必须与网页端一致：换成 App 的接口或少了 jssdk 参数，上游都会回
 // 「该应用无权限」(error_code 16)。这里把三处关键值钉住，避免以后误改。
 func TestPassportRequestShape(t *testing.T) {
-	if passportHost != "https://accounts.doubao.com" {
-		t.Errorf("passportHost = %q", passportHost)
+	// 账号中心按上游取：豆包在 accounts.，Dola 没有独立账号中心。
+	if got := profileFor(realmDoubao).PassportHost; got != "https://accounts.doubao.com" {
+		t.Errorf("豆包 passportHost = %q", got)
+	}
+	if got := profileFor(realmDola).PassportHost; got != "https://www.dola.com" {
+		t.Errorf("Dola passportHost = %q", got)
 	}
 	if passportSendCodePath != "/passport/web/send_code/" {
 		t.Errorf("发码路径 = %q", passportSendCodePath)
@@ -226,7 +230,7 @@ func TestPassportRequestShape(t *testing.T) {
 		t.Errorf("登录路径 = %q", passportLoginPath)
 	}
 
-	query := passportQuery("497858")
+	query := passportQuery(profileFor(realmDoubao))
 	for _, want := range []string{
 		"passport_jssdk_version=", "passport_jssdk_type=normal",
 		"is_from_ttaccountsdk=1", "aid=497858", "language=zh",
@@ -309,18 +313,19 @@ func TestModelCatalogue(t *testing.T) {
 		key   string
 	}
 	cases := map[string]want{
-		"default":            {kindChat, 0, ""},
-		"pro":                {kindChat, 0, ""},
-		"image":              {kindImage, skillImageGen, ""},
-		"seedream-5.0-pro":   {kindImage, skillImageGen, "seedream_5.0_pro"},
-		"seedream-5.0-flash": {kindImage, skillImageGen, "seedream_5.0"},
+		"default": {kindChat, 0, ""},
+		"pro":     {kindChat, 0, ""},
+		"image":   {kindImage, skillImageGen, ""},
+		// 键名取自两侧 APK 的资源表，两边的拼法不同。
+		"seedream-5.0-pro":   {kindImage, skillImageGen, "seedream50Pro"},
+		"seedream-5.0-flash": {kindImage, skillImageGen, "seedream50Lite"},
 		"seedream-4.5":       {kindImage, skillImageGen, "seedream_4.5"},
 		"seedream-4.0":       {kindImage, skillImageGen, "seedream_4.0"},
 		"video":              {kindVideo, skillVideoGen, ""},
-		"seedance-2.5":       {kindVideo, skillVideoGen, "seedance_2.5"},
-		"seedance-2.0":       {kindVideo, skillVideoGen, "seedance_2.0"},
-		"seedance-2.0-fast":  {kindVideo, skillVideoGen, "seedance_2.0_fast"},
-		"seedance-2.0-mini":  {kindVideo, skillVideoGen, "seedance_2.0_mini"},
+		"seedance-2.5":       {kindVideo, skillVideoGen, "seedance25"},
+		"seedance-2.0":       {kindVideo, skillVideoGen, "seedance20Standard"},
+		"seedance-2.0-fast":  {kindVideo, skillVideoGen, "seedance20Fast"},
+		"seedance-2.0-mini":  {kindVideo, skillVideoGen, "seedance20Mini"},
 	}
 	for name, w := range cases {
 		// 带与不带上游前缀都应按同一别名解析。
@@ -453,6 +458,108 @@ func TestModelForAuthIsRealmScoped(t *testing.T) {
 		}
 		if !ids[c.want] {
 			t.Errorf("%s: 缺少 %s", c.name, c.want)
+		}
+	}
+}
+
+// Dola 没有独立账号中心，passport 挂在站点本身；aid 必须是 495671。
+//
+// 实测两个值的结果差别很明显：
+//
+//	aid=495671  → error_code 7（访问太频繁，说明接口与参数都通过）
+//	aid=497858  → error_code 16（该应用无权限，那是豆包的 aid）
+func TestDolaPassportProfile(t *testing.T) {
+	profile := profileFor(realmDola)
+	if profile.PassportHost != "https://www.dola.com" {
+		t.Errorf("Dola PassportHost = %q", profile.PassportHost)
+	}
+	if profile.PassportAID != "495671" {
+		t.Errorf("Dola PassportAID = %q，用错会得到 error_code 16", profile.PassportAID)
+	}
+
+	query := passportQuery(profile)
+	for _, want := range []string{"aid=495671", "language=zh", "is_from_ttaccountsdk=1"} {
+		if !strings.Contains(query, want) {
+			t.Errorf("Dola query 缺少 %s: %s", want, query)
+		}
+	}
+	// 不能把豆包的 aid 带过去
+	if strings.Contains(query, "497858") {
+		t.Errorf("Dola query 里出现了豆包的 aid: %s", query)
+	}
+
+	// 豆包侧仍然是自己的账号中心与 aid
+	doubao := profileFor(realmDoubao)
+	if doubao.PassportHost != "https://accounts.doubao.com" || doubao.PassportAID != "497858" {
+		t.Errorf("豆包 passport 配置被改坏: %+v", doubao)
+	}
+}
+
+// 网页版接口是唯一走得通的：App 侧的 mobile 接口被签名挡住。
+func TestPassportUsesWebEndpoints(t *testing.T) {
+	if !strings.HasPrefix(passportSendCodePath, "/passport/web/") {
+		t.Errorf("发码应走 web 接口，实际 %q", passportSendCodePath)
+	}
+	if !strings.HasPrefix(passportLoginPath, "/passport/web/") {
+		t.Errorf("登录应走 web 接口，实际 %q", passportLoginPath)
+	}
+	// App 侧接口的路径不能被引用
+	for _, p := range []string{"/passport/mobile/"} {
+		if strings.Contains(passportSendCodePath, p) || strings.Contains(passportLoginPath, p) {
+			t.Errorf("不应使用 App 侧接口 %s", p)
+		}
+	}
+}
+
+// 两侧的 model_item_key 拼法不同，必须按凭据所属上游取。
+//
+// 之前两侧共用一个键，而那个键在两边都不存在（seedance_2.0_fast），
+// 服务端静默忽略后回落到默认模型 —— 表现就是「选 Fast 却生成了 Mini」。
+func TestModelKeyPerRealm(t *testing.T) {
+	cases := []struct {
+		alias        string
+		doubao, dola string
+	}{
+		{"seedream-5.0-pro", "seedream50Pro", "seedream_5.0_global"},
+		{"seedream-5.0-flash", "seedream50Lite", "seedream_5.0_global"},
+		{"seedream-4.5", "seedream_4.5", "seedream_4.5_global"},
+		{"seedream-4.0", "seedream_4.0", "seedream_4.0_global"},
+		{"seedance-2.5", "seedance25", "seedance_2.5"},
+		{"seedance-2.0", "seedance20Standard", "seedance_2.0_pc_dola"},
+		{"seedance-2.0-fast", "seedance20Fast", "seedance_2.0_pc_dola"},
+		{"seedance-2.0-mini", "seedance20Mini", "seedance_2.0_pc_dola"},
+	}
+	for _, c := range cases {
+		if got := modelKeyForRealm(c.alias, realmDoubao); got != c.doubao {
+			t.Errorf("豆包 %s = %q, 期望 %q", c.alias, got, c.doubao)
+		}
+		if got := modelKeyForRealm(c.alias, realmDola); got != c.dola {
+			t.Errorf("Dola %s = %q, 期望 %q", c.alias, got, c.dola)
+		}
+	}
+}
+
+// 这些键必须来自 APK 的资源表，不能是意译出来的名字。
+// 写错会被服务端静默忽略，用户只会看到「选了 A 生成 B」。
+func TestModelKeysMatchAppResources(t *testing.T) {
+	// 豆包（豆包_15.4.0.apk）与 Dola（Dola_15.3.0.apk）资源里出现的键
+	doubaoKeys := map[string]bool{
+		"seedream50Pro": true, "seedream50Lite": true, "seedream_4.5": true,
+		"seedream_4.0": true, "seedance25": true, "seedance20Standard": true,
+		"seedance20Fast": true, "seedance20Mini": true,
+		"seedream_3.0": true, "seedance_1.5": true,
+	}
+	dolaKeys := map[string]bool{
+		"seedream_5.0_global": true, "seedream_4.5_global": true,
+		"seedream_4.0_global": true, "seedance_2.5": true, "seedance_2.0_pc_dola": true,
+		"seedream_3.0_global": true, "seedance_1.5": true,
+	}
+	for _, alias := range capabilityAliases {
+		if alias.ModelKey != "" && !doubaoKeys[alias.ModelKey] {
+			t.Errorf("%s 的豆包键 %q 在 APK 资源里不存在", alias.ID, alias.ModelKey)
+		}
+		if alias.DolaKey != "" && !dolaKeys[alias.DolaKey] {
+			t.Errorf("%s 的 Dola 键 %q 在 APK 资源里不存在", alias.ID, alias.DolaKey)
 		}
 	}
 }

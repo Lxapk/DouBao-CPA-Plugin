@@ -40,10 +40,12 @@ func defaultSettings() pluginSettings {
 		ExposeModels:          boolPtr(true),
 		RequestTimeoutSeconds: 90,
 		ReplyPollSeconds:      120,
-		MediaPollSeconds:      600,
-		ReplyPollIntervalMS:   700,
-		Debug:                 false,
-		Routing:               routingSettings{Strategy: routingRoundRobin},
+		// 视频生成通常 5–10 分钟，流还会中途断开；600 秒会让一部分生成在
+		// 结果出现前就被放弃，给到 15 分钟。
+		MediaPollSeconds:    900,
+		ReplyPollIntervalMS: 700,
+		Debug:               false,
+		Routing:             routingSettings{Strategy: routingRoundRobin},
 	}
 }
 

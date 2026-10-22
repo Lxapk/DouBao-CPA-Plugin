@@ -36,9 +36,6 @@ import (
 // mobile 接口：后者按应用签名鉴权，第三方请求一律 "该应用无权限"（error_code 16）。
 // web 接口只需要 aid 与 passport jssdk 的版本参数，实测可直接发码。
 const (
-	// passportHost 是账号中心。它与 www.doubao.com 同源 Cookie 域，
-	// 但 passport 接口只在这个域名下开放。
-	passportHost         = "https://accounts.doubao.com"
 	passportSendCodePath = "/passport/web/send_code/"
 	// 校验走 sms_login：validate_code 是 App 侧的接口，网页端用的是这个。
 	passportLoginPath = "/passport/web/sms_login/"
@@ -62,14 +59,15 @@ func (e *phoneLoginError) Error() string {
 
 // passportQuery 是 web passport 接口要求的固定 query。
 //
-// 缺 passport_jssdk_* 时网关会当成非法来源；aid 决定下发哪个应用的短信模板。
-func passportQuery(aid string) string {
+// 缺 passport_jssdk_* 时网关会当成非法来源；aid 决定下发哪个应用的短信模板，
+// language 决定短信与页面的语言。两者都按上游取，写死会让另一侧登录不了。
+func passportQuery(profile realmProfile) string {
 	q := url.Values{}
 	q.Set("passport_jssdk_version", "4.1.5-beta.0")
 	q.Set("passport_jssdk_type", "normal")
 	q.Set("is_from_ttaccountsdk", "1")
-	q.Set("aid", aid)
-	q.Set("language", "zh")
+	q.Set("aid", profile.PassportAID)
+	q.Set("language", profile.Locale)
 	return "?" + q.Encode()
 }
 
@@ -83,8 +81,14 @@ func passportMobile(phone string) string {
 	if digits == "" {
 		digits = strings.TrimSpace(phone)
 	}
-	return "+86 " + digits
+	return passportDialCode + " " + digits
 }
+
+// passportDialCode 是 mobile 字段里带的国际区号。
+//
+// 豆包是国内站点，固定 +86；Dola 是国际站点，区号随号码来源变化，
+// 现在只支持国内号码，所以两边都用 +86。
+const passportDialCode = "+86"
 
 // xorHex 复现客户端的 encryptWithXor：逐字节异或 5，再转十六进制。
 func xorHex(value string) string {
@@ -182,8 +186,8 @@ func sendLoginCode(ctx context.Context, r realm, phone string) error {
 	form.Set("is6Digits", "1")
 	form.Set("fixed_mix_mode", "1")
 
-	query := passportQuery(profile.AID)
-	resp, payload, errDo := passportRequest(ctx, passportHost, passportSendCodePath+query, form)
+	query := passportQuery(profile)
+	resp, payload, errDo := passportRequest(ctx, profile.PassportHost, passportSendCodePath+query, form)
 	if errDo != nil {
 		return errDo
 	}
@@ -211,8 +215,8 @@ func loginWithCode(ctx context.Context, r realm, phone string, code string) (str
 	form.Set("login_only", "false")
 	form.Set("ignore_lark_account", "true")
 
-	query := passportQuery(profile.AID)
-	resp, payload, errDo := passportRequest(ctx, passportHost, passportLoginPath+query, form)
+	query := passportQuery(profile)
+	resp, payload, errDo := passportRequest(ctx, profile.PassportHost, passportLoginPath+query, form)
 	if errDo != nil {
 		return "", errDo
 	}

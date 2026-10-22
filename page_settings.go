@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"html"
 	"strings"
 )
@@ -24,11 +23,6 @@ func renderSettingsView() string {
 		`<span class="desc">不带前缀的模型名会用哪一个上游</span></div>`)
 	b.WriteString(renderRealmBox(settings))
 	b.WriteString(renderExposeBox(settings))
-
-	// ---- how a call is served ----
-	b.WriteString(`<div class="group-head"><h2>调用</h2>` +
-		`<span class="desc">超时与等待预算，决定一次请求愿意等多久</span></div>`)
-	b.WriteString(renderCallBox(settings))
 
 	// ---- account selection ----
 	b.WriteString(`<div class="group-head"><h2>路由</h2>` +
@@ -164,60 +158,6 @@ func renderExposeBox(settings pluginSettings) string {
 	b.WriteString(`<div class="setting-effect">关闭后 <code>/v1/models</code> 只列出默认上游的模型，` +
 		`另一个上游的账号即使已授权也不会出现在选择列表里。</div>`)
 	b.WriteString(`</div></div>`)
-	return b.String()
-}
-
-// renderCallBox holds the timing settings.
-func renderCallBox(settings pluginSettings) string {
-	var b strings.Builder
-	b.WriteString(`<div class="box">`)
-	b.WriteString(`<header><h3>超时与轮询</h3><span class="grow"></span>` +
-		`<span class="note" id="callMsg"></span></header>`)
-
-	for _, row := range []struct {
-		id, name, label, desc string
-		value                 int
-	}{
-		{
-			"setTimeout", "request_timeout_seconds",
-			"单次上游请求超时（秒）",
-			"单个 HTTP 请求的最长耗时。流式对话不受此限制，由下面的预算决定。",
-			settings.RequestTimeoutSeconds,
-		},
-		{
-			"setReply", "reply_poll_seconds",
-			"等待文本回复（秒）",
-			"文本对话愿意等待的最长时间。太短会在模型还在生成时放弃。",
-			settings.ReplyPollSeconds,
-		},
-		{
-			"setMedia", "media_poll_seconds",
-			"等待图片 / 视频（秒）",
-			"生成图片或视频愿意等待的最长时间。视频走异步任务，这里的预算作用于后台生成，不影响提交接口的响应速度。",
-			settings.MediaPollSeconds,
-		},
-		{
-			"setIntervalMs", "reply_poll_interval_ms",
-			"轮询间隔（毫秒）",
-			"检查流式应答的频率。调小响应更及时，代价是更频繁的请求。",
-			settings.ReplyPollIntervalMS,
-		},
-	} {
-		b.WriteString(`<div class="pad" style="padding-bottom:0"><div class="row" style="align-items:flex-end">`)
-		b.WriteString(`<div style="flex:1 1 260px;min-width:0">`)
-		b.WriteString(`<div class="note" style="margin-bottom:6px">` + row.label + `</div>`)
-		// 次级文字色：这是要读的说明，不是占位符。
-		b.WriteString(`<div class="note" style="color:var(--text-tertiary);margin-bottom:8px">` + row.desc + `</div>`)
-		b.WriteString(`</div>`)
-		b.WriteString(`<div class="btn-end" style="flex:0 0 auto">`)
-		b.WriteString(fmt.Sprintf(`<input type="number" id="%s" value="%d" min="1" style="width:110px">`, row.id, row.value))
-		b.WriteString(`<button type="button" class="primary"` +
-			` data-call="saveNum" data-arg0="` + row.id + `" data-arg1="` + row.name + `"` +
-			`>保存</button>`)
-		b.WriteString(`</div></div></div>`)
-	}
-
-	b.WriteString(`<div style="height:18px"></div></div>`)
 	return b.String()
 }
 

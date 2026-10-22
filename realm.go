@@ -41,6 +41,16 @@ type realmProfile struct {
 	PCCVersion string
 	// Locale is the web UI language.
 	Locale string
+	// PassportHost is the account centre that serves the passport endpoints.
+	//
+	// 豆包把它放在 accounts.doubao.com，Dola 没有独立账号中心，passport 就挂在
+	// 站点本身。写死成一个域名会让另一侧的上游永远登录不了。
+	PassportHost string
+	// PassportAID is the aid the passport endpoints expect.
+	//
+	// 它和 IM 那套的 AID 不是一回事：短信模板、登录后的站点归属都看这个值，
+	// 用错会得到「应用无权限」或登录到另一侧。
+	PassportAID string
 }
 
 const (
@@ -59,6 +69,8 @@ var realmProfiles = map[realm]realmProfile{
 		CookieDomain: ".doubao.com",
 		PCCVersion:   doubaoPCVersion,
 		Locale:       "zh",
+		PassportHost: "https://accounts.doubao.com",
+		PassportAID:  "497858",
 	},
 	realmDola: {
 		ID:           realmDola,
@@ -70,6 +82,9 @@ var realmProfiles = map[realm]realmProfile{
 		CookieDomain: ".dola.com",
 		PCCVersion:   doubaoPCVersion,
 		Locale:       "zh",
+		// Dola 没有独立账号中心，passport 挂在站点本身。
+		PassportHost: "https://www.dola.com",
+		PassportAID:  "495671",
 	},
 }
 

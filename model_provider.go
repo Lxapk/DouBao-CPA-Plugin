@@ -46,6 +46,13 @@ type modelAlias struct {
 	// 按已知版本做的映射；键名与 APK 资源里的 larus_imageGen_model_menu_* /
 	// larus_aiVideo_tag_seedance_* 一一对应。留空表示交给上游选默认模型。
 	ModelKey string
+	// DolaKey 是 Dola 侧对应的 model_item_key。
+	//
+	// 两个上游的内部键并不相同：豆包用 seedance20Fast，Dola 用
+	// seedance_2.0_pc_dola；图片那一侧 Dola 统一带 _global 后缀。只写一个
+	// 值会让另一侧拿到不存在的键 —— 服务端会静默忽略、回落到默认模型，
+	// 表现就是「选了 Fast 却生成了 Mini」。
+	DolaKey string
 	// DeepThink asks the upstream to reason before answering. It is a flag on the
 	// request rather than a skill, so the two are modelled separately.
 	DeepThink bool
@@ -132,7 +139,8 @@ var capabilityAliases = []modelAlias{
 		Description: "专业出图，4 倍消耗。",
 		Skill:       skillImageGen,
 		Kind:        kindImage,
-		ModelKey:    "seedream_5.0_pro",
+		ModelKey:    "seedream50Pro",
+		DolaKey:     "seedream_5.0_global",
 	},
 	{
 		ID:          "seedream-5.0-flash",
@@ -140,7 +148,8 @@ var capabilityAliases = []modelAlias{
 		Description: "专业快速。",
 		Skill:       skillImageGen,
 		Kind:        kindImage,
-		ModelKey:    "seedream_5.0",
+		ModelKey:    "seedream50Lite",
+		DolaKey:     "seedream_5.0_global",
 	},
 	{
 		ID:          "seedream-4.5",
@@ -149,6 +158,7 @@ var capabilityAliases = []modelAlias{
 		Skill:       skillImageGen,
 		Kind:        kindImage,
 		ModelKey:    "seedream_4.5",
+		DolaKey:     "seedream_4.5_global",
 	},
 	{
 		ID:          "seedream-4.0",
@@ -157,6 +167,16 @@ var capabilityAliases = []modelAlias{
 		Skill:       skillImageGen,
 		Kind:        kindImage,
 		ModelKey:    "seedream_4.0",
+		DolaKey:     "seedream_4.0_global",
+	},
+	{
+		ID:          "seedream-3.0",
+		DisplayName: "Seedream 3.0",
+		Description: "上一代生图。",
+		Skill:       skillImageGen,
+		Kind:        kindImage,
+		ModelKey:    "seedream_3.0",
+		DolaKey:     "seedream_3.0_global",
 	},
 
 	// ---- 视频：Seedance 系列（APK 资源 larus_aiVideo_tag_seedance_*）----
@@ -173,7 +193,8 @@ var capabilityAliases = []modelAlias{
 		Description: "旗舰视频标杆，5 倍消耗。",
 		Skill:       skillVideoGen,
 		Kind:        kindVideo,
-		ModelKey:    "seedance_2.5",
+		ModelKey:    "seedance25",
+		DolaKey:     "seedance_2.5",
 	},
 	{
 		ID:          "seedance-2.0",
@@ -181,7 +202,8 @@ var capabilityAliases = []modelAlias{
 		Description: "进阶画面表现，2 倍消耗。",
 		Skill:       skillVideoGen,
 		Kind:        kindVideo,
-		ModelKey:    "seedance_2.0",
+		ModelKey:    "seedance20Standard",
+		DolaKey:     "seedance_2.0_pc_dola",
 	},
 	{
 		ID:          "seedance-2.0-fast",
@@ -189,7 +211,8 @@ var capabilityAliases = []modelAlias{
 		Description: "快速出片选择。",
 		Skill:       skillVideoGen,
 		Kind:        kindVideo,
-		ModelKey:    "seedance_2.0_fast",
+		ModelKey:    "seedance20Fast",
+		DolaKey:     "seedance_2.0_pc_dola",
 	},
 	{
 		ID:          "seedance-2.0-mini",
@@ -197,17 +220,38 @@ var capabilityAliases = []modelAlias{
 		Description: "日常生成使用。",
 		Skill:       skillVideoGen,
 		Kind:        kindVideo,
-		ModelKey:    "seedance_2.0_mini",
+		ModelKey:    "seedance20Mini",
+		DolaKey:     "seedance_2.0_pc_dola",
+	},
+	{
+		ID:          "seedance-1.5",
+		DisplayName: "Seedance 1.5",
+		Description: "上一代视频模型。",
+		Skill:       skillVideoGen,
+		Kind:        kindVideo,
+		ModelKey:    "seedance_1.5",
+		DolaKey:     "seedance_1.5",
 	},
 }
 
-// modelKeyFor 返回一个别名对应的上游 model_item_key。
+// modelKeyFor 返回一个别名在某一侧上游的 model_item_key。
+//
+// 两侧的内部键不同，空值表示让服务端用默认模型。DolaKey 缺省时退回 ModelKey，
+// 这样只在一侧存在的模型仍能工作。
 func modelKeyFor(requested string) string {
+	return modelKeyForRealm(requested, "")
+}
+
+func modelKeyForRealm(requested string, r realm) string {
 	name, _ := stripModelPrefix(normalizeModelName(requested))
 	for _, alias := range capabilityAliases {
-		if strings.EqualFold(name, alias.ID) {
-			return alias.ModelKey
+		if !strings.EqualFold(name, alias.ID) {
+			continue
 		}
+		if r == realmDola && alias.DolaKey != "" {
+			return alias.DolaKey
+		}
+		return alias.ModelKey
 	}
 	return ""
 }

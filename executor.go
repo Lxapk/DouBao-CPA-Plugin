@@ -337,7 +337,7 @@ func executeVideoOnce(creds *credentials, chat *chatRequest) (map[string]any, er
 		return nil, errors.New("请求中没有可发送的内容")
 	}
 
-	mode := modeForRequest(chat)
+	mode := modeForRequestRealm(chat, creds.Realm)
 	// 比例与时长由 agent 在规划阶段决定，只能通过提示词传达。
 	prompt = withGenerationHints(prompt, mode.Kind, chat)
 
@@ -599,7 +599,7 @@ func executeExchange(creds *credentials, chat *chatRequest, onDelta func(string)
 	}
 
 	// The model alias decides whether this is chat or a generation.
-	mode := modeForRequest(chat)
+	mode := modeForRequestRealm(chat, creds.Realm)
 
 	budget := settings.ReplyPollSeconds
 	if mode.Skill > 0 {
@@ -676,7 +676,7 @@ func executeExchangeResult(creds *credentials, chat *chatRequest, onDelta func(s
 		return nil, errors.New("请求中没有可发送的内容")
 	}
 
-	mode := modeForRequest(chat)
+	mode := modeForRequestRealm(chat, creds.Realm)
 	budget := settings.ReplyPollSeconds
 	if mode.Skill > 0 {
 		budget = settings.MediaPollSeconds
@@ -719,18 +719,31 @@ func executeExchangeResult(creds *credentials, chat *chatRequest, onDelta func(s
 // when the model name is a bare one, because the client already chose the image
 // surface. The alias then decides which capability the upstream should run.
 func modeForRequest(r *chatRequest) generationMode {
+	return modeForRequestRealm(r, "")
+}
+
+// modeForRequestRealm 按凭据所属的上游取 model_item_key。
+//
+// 两侧的内部键不同（豆包 seedance20Fast / Dola seedance_2.0_pc_dola），
+// 用错会被服务端静默忽略并回落到默认模型。
+func modeForRequestRealm(r *chatRequest, target realm) generationMode {
 	switch r.Surface {
 	case surfaceImage:
 		// 端点是图片，但具体模型由模型名决定；没指定就用默认。
-		return generationMode{Skill: skillImageGen, Kind: kindImage, ModelKey: modelKeyFor(r.Model)}
+		return generationMode{Skill: skillImageGen, Kind: kindImage, ModelKey: modelKeyForRealm(r.Model, target)}
 	case surfaceVideo:
-		return generationMode{Skill: skillVideoGen, Kind: kindVideo, ModelKey: modelKeyFor(r.Model)}
+		return generationMode{Skill: skillVideoGen, Kind: kindVideo, ModelKey: modelKeyForRealm(r.Model, target)}
 	}
-	return modeForModel(r.Model)
+	return modeForModelRealm(r.Model, target)
 }
 
 // modeForModel maps a client model name to a generation mode.
 func modeForModel(model string) generationMode {
+	return modeForModelRealm(model, "")
+}
+
+// modeForModelRealm 同上，并按上游取 model_item_key。
+func modeForModelRealm(model string, target realm) generationMode {
 	skill := skillForModel(model)
 	if skill == 0 {
 		return generationMode{Skill: 0, Kind: "text", DeepThink: deepThinkForModel(model)}
@@ -740,7 +753,7 @@ func modeForModel(model string) generationMode {
 	if strings.HasPrefix(strings.ToLower(name), "video") || strings.HasPrefix(strings.ToLower(name), "seedance") {
 		kind = kindVideo
 	}
-	return generationMode{Skill: skill, Kind: kind, ModelKey: modelKeyFor(model)}
+	return generationMode{Skill: skill, Kind: kind, ModelKey: modelKeyForRealm(model, target)}
 }
 
 // attachCreationAssets converts generated media into OpenAI multimodal content.
