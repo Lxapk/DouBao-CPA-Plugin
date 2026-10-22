@@ -385,9 +385,9 @@ func renderGuideView() string {
 }</pre>`)
 	b.WriteString(`<div class="note" style="margin-top:10px">图片会作为附件块（block_type 10052）随消息发出，` +
 		`与网页端上传图片后的请求一致。只发图片、不带文字也可以。</div>`)
-	b.WriteString(`<div class="note bad" style="margin-top:8px">目前只支持豆包已有的图片资源地址` +
-		`（<code>....byteimg.com/tos-cn-i-…</code>）。外链与 base64 内联图片需要先上传到豆包，` +
-		`上传链路未实现，这类请求会明确报错而不是静默丢图。</div>`)
+	b.WriteString(`<div class="note" style="margin-top:9px">图片地址可以是：<code>http(s)</code> 外链、` +
+		`<code>data:image/…;base64,…</code> 内联图、本地文件路径，或豆包资源 uri` +
+		`（<code>tos-cn-i-…</code>）。前三种由插件先上传到豆包再发送，最后一种直接使用。</div>`)
 	b.WriteString(`</div></div>`)
 
 	b.WriteString(`<div class="group-head"><h2>已知限制</h2></div>`)

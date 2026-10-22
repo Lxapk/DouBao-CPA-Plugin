@@ -595,6 +595,12 @@ func executeExchange(creds *credentials, chat *chatRequest, onDelta func(string)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(budget+30)*time.Second)
 	defer cancel()
 
+	// 没有资源标识的图片（本地文件、外链、base64）先上传，拿到 uri 再发。
+	images, errUpload := ensureImagesUploaded(ctx, creds, images)
+	if errUpload != nil {
+		return nil, nil, errUpload
+	}
+
 	// The conversation id must name a real thread: the endpoint rejects a
 	// placeholder with a generic param error. The account's most recent
 	// conversation is reused, which is safe because every request replaces its
@@ -663,6 +669,11 @@ func executeExchangeResult(creds *credentials, chat *chatRequest, onDelta func(s
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(budget+30)*time.Second)
 	defer cancel()
+
+	images, errUpload := ensureImagesUploaded(ctx, creds, images)
+	if errUpload != nil {
+		return nil, errUpload
+	}
 
 	conversationID := ""
 	needCreate := false

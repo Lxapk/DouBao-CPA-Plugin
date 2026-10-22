@@ -122,18 +122,21 @@ func TestAttachmentBlockMatchesCapturedShape(t *testing.T) {
 	}
 }
 
-// 无法处理的图片必须报错，不能静默丢弃。
-func TestUnsupportedImagesAreRejected(t *testing.T) {
-	for _, img := range []imagePart{
-		{URL: "https://example.com/a.png"},
-		{DataURL: true},
-	} {
-		if err := checkImagesSupported([]imagePart{img}); err == nil {
-			t.Errorf("应拒绝: %+v", img)
-		}
+// 本地文件、外链、base64 现在走上传，不再直接拒绝；
+// 只有拿不到任何内容的空图片才报错。
+func TestEmptyImageRejected(t *testing.T) {
+	if err := checkImagesSupported([]imagePart{{}}); err == nil {
+		t.Error("空图片应被拒绝")
 	}
-	if err := checkImagesSupported([]imagePart{{URI: "tos-cn-i-x/a.png"}}); err != nil {
-		t.Errorf("豆包资源不应被拒绝: %v", err)
+	for _, ok := range []imagePart{
+		{URL: "https://example.com/a.png"},
+		{DataURL: true, URL: "data:image/png;base64,AAA"},
+		{LocalPath: "/tmp/a.jpg"},
+		{URI: "tos-cn-i-x/a.png"},
+	} {
+		if err := checkImagesSupported([]imagePart{ok}); err != nil {
+			t.Errorf("不应拒绝 %+v: %v", ok, err)
+		}
 	}
 }
 

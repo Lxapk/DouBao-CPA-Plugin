@@ -33,8 +33,10 @@ type imagePart struct {
 	URI string
 	// URL 是图片地址；URI 为空时用它判断能否直接从已有资源引用。
 	URL string
-	// DataURL 是 data: 开头的内联图片，无法直接使用。
+	// DataURL 是 data: 开头的内联图片。
 	DataURL bool
+	// LocalPath 是本地文件路径（file:// 或绝对路径）。
+	LocalPath string
 	// Detail 是 OpenAI 的 low/high 提示，仅用于日志。
 	Detail string
 }
@@ -66,12 +68,14 @@ func (m *chatMessage) extractImages() []imagePart {
 		}
 
 		part := imagePart{Detail: detail, URL: raw}
-		if strings.HasPrefix(raw, "data:") {
+		switch {
+		case strings.HasPrefix(raw, "data:"):
 			part.DataURL = true
-			part.URL = ""
-		} else if uri := resourceURIFromURL(raw); uri != "" {
-			// 豆包的资源地址：uri 才是发送时要的东西。
-			part.URI = uri
+		case strings.HasPrefix(raw, "file://") || strings.HasPrefix(raw, "/"):
+			part.LocalPath = strings.TrimPrefix(raw, "file://")
+		default:
+			// 豆包资源地址或豆包域名下的图片：能取出 uri 就直接用。
+			part.URI = resourceURIFromURL(raw)
 		}
 		out = append(out, part)
 	}
@@ -108,6 +112,21 @@ func parseImageURLField(raw json.RawMessage) (url string, detail string) {
 // 取 host 后面、`~` 之前的那段，就是 uri。不是豆包域名则返回空。
 func resourceURIFromURL(raw string) string {
 	s := strings.TrimSpace(raw)
+
+	// 已经是资源 uri 本身（tos-cn-i-<service>/<path>）就直接用。
+	//
+	// 上传接口 /alice/bot/upload_file 返回的就是这种形式，用户/客户端也可能
+	// 直接把它当作图片地址传进来。
+	if strings.HasPrefix(s, "tos-cn-i-") {
+		if cut := strings.IndexByte(s, '~'); cut >= 0 {
+			s = s[:cut]
+		}
+		if cut := strings.IndexByte(s, '?'); cut >= 0 {
+			s = s[:cut]
+		}
+		return s
+	}
+
 	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
 		return ""
 	}
@@ -181,13 +200,10 @@ type imageMeta struct {
 // 而不是怀疑模型理解能力。
 func checkImagesSupported(images []imagePart) error {
 	for _, img := range images {
-		if img.URI != "" {
+		if img.URI != "" || img.DataURL || img.LocalPath != "" || img.URL != "" {
 			continue
 		}
-		if img.DataURL {
-			return errImageNeedsUpload("base64 内联图片")
-		}
-		return errImageNeedsUpload("外部图片链接")
+		return errImageNeedsUpload("空图片")
 	}
 	return nil
 }
