@@ -31,14 +31,32 @@ func TestAccountsStatCardsEven(t *testing.T) {
 	}
 }
 
-// 添加账号表单默认收起，由表头按钮展开。
-func TestAuthSectionCollapsed(t *testing.T) {
+// 账号页只有表头那一个添加入口，页面里不再有独立的添加账号区块。
+func TestAccountsHasSingleAddEntry(t *testing.T) {
 	page := renderAccountsView()
-	if !strings.Contains(page, `id="authSection" hidden`) {
-		t.Error("添加账号区块应默认收起")
+	if strings.Contains(page, `id="authSection"`) {
+		t.Error("不应再有独立的添加账号区块")
 	}
-	if !strings.Contains(panelScript(), `getElementById("authSection")`) {
-		t.Error("openLogin 应展开表单")
+	if strings.Contains(page, "renderAuthorisationBox") || strings.Contains(page, "粘贴 Cookie") {
+		t.Error("Cookie 授权表单应已移除")
+	}
+	// 表头那一个按钮还在，且只出现一次
+	if n := strings.Count(page, `data-call="openLogin"`); n != 1 {
+		t.Errorf("添加账号按钮应只有 1 个，实际 %d", n)
+	}
+}
+
+// 账号表底部不再有启停说明文字。
+func TestAccountsFooterHasNoNote(t *testing.T) {
+	page := renderAccountsView()
+	if strings.Contains(page, "启停会写入 CPA 的 auth 文件") {
+		t.Error("底部说明文字应已移除")
+	}
+	// 两个批量按钮还在
+	for _, want := range []string{"全部启用", "全部停用"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("缺少 %q", want)
+		}
 	}
 }
 

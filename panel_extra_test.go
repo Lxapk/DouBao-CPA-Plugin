@@ -35,7 +35,7 @@ func TestPanelRendersEveryView(t *testing.T) {
 func TestPanelScriptEndpointsAreRouted(t *testing.T) {
 	script := panelScript()
 	for _, path := range []string{
-		"/accounts", "/account/toggle", "/account/remove", "/authorize",
+		"/accounts", "/account/toggle", "/account/remove",
 		"/realm/switch", "/settings", "/calls", "/calls/clear",
 		"/routing/config", "/routing/reset",
 	} {
@@ -52,8 +52,8 @@ func TestPanelScriptEndpointsAreRouted(t *testing.T) {
 	}
 	for _, action := range []string{
 		"refreshAccounts", "toggleAccount", "bulkAccounts", "removeAccount",
-		"pickAuthRealm", "clearAuthForm", "submitAuthorize", "setRealm",
-		"setExpose", "setDebug", "saveNum", "pickStrategy", "resetRotation",
+		"openLogin", "setRealm",
+		"setExpose", "saveNum", "pickStrategy", "resetRotation",
 		"refreshUsage", "clearCalls", "saveKey", "clearKey",
 	} {
 		if !strings.Contains(script, action+": function") {

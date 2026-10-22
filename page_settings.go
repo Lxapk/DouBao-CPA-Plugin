@@ -35,11 +35,6 @@ func renderSettingsView() string {
 		`<span class="desc">请求如何在这些账号之间分配</span></div>`)
 	b.WriteString(renderRoutingBox(routingStatusJSON()))
 
-	// ---- diagnostics ----
-	b.WriteString(`<div class="group-head"><h2>诊断</h2>` +
-		`<span class="desc">排查问题时打开</span></div>`)
-	b.WriteString(renderDebugBox(settings))
-
 	// ---- panel access ----
 	b.WriteString(`<div class="group-head"><h2>面板访问</h2>` +
 		`<span class="desc">保存设置需要向 CPA 证明身份</span></div>`)
@@ -272,36 +267,6 @@ func renderRoutingBox(routing map[string]any) string {
 	b.WriteString(`<button type="button" class="xs" data-call="resetRotation">重置轮巡位置</button>`)
 	b.WriteString(`</div>`)
 
-	b.WriteString(`</div></div>`)
-	return b.String()
-}
-
-// renderDebugBox holds the diagnostics toggle.
-func renderDebugBox(settings pluginSettings) string {
-	var b strings.Builder
-	b.WriteString(`<div class="box">`)
-	b.WriteString(`<header><h3>详细日志</h3><span class="grow"></span>` +
-		`<span class="note" id="debugMsg"></span></header>`)
-	b.WriteString(`<div class="pad">`)
-	b.WriteString(`<div class="seg" id="debugSeg">`)
-	for _, opt := range []struct {
-		value, label string
-		state        bool
-	}{
-		{"on", "打开", true},
-		{"off", "关闭", false},
-	} {
-		cls := ""
-		if opt.state == settings.Debug {
-			cls = "on"
-		}
-		b.WriteString(`<button type="button" class="` + cls + `"` +
-			` data-value="` + opt.value + `"` +
-			` data-call="setDebug" data-arg0="` + opt.value + `">` + opt.label + `</button>`)
-	}
-	b.WriteString(`</div>`)
-	b.WriteString(`<div class="setting-effect">打开后插件会把每次调用的方法与上游响应摘要写进 CPA 日志。` +
-		`摘要不含 Cookie，其余请求头与响应片段都在，排查协议问题时很有用，平时建议关闭。</div>`)
 	b.WriteString(`</div></div>`)
 	return b.String()
 }

@@ -319,34 +319,6 @@ func panelScript() string {
 
   /* ---------- authorisation ---------- */
 
-  function selectedAuthRealm() {
-    return segValue("authRealmSeg") || storageGet(AUTH_REALM_KEY) || "doubao";
-  }
-
-  function showAuthorizeResult(data, ok) {
-    var host = document.getElementById("authResult");
-    if (!host) return;
-    if (!data) { host.innerHTML = ""; return; }
-
-    if (!ok || data.ok === false) {
-      var msg = esc((data && (data.error || data.message)) || "授权失败");
-      if (data && data.error_hint) {
-        msg += '<div class="note" style="margin-top:6px">' + esc(data.error_hint) + "</div>";
-      }
-      host.innerHTML = '<div class="toast bad" style="max-width:none">' + msg + "</div>";
-      return;
-    }
-
-    var lines = ["<div><b>授权成功</b> — " + esc(data.realm_name || data.realm) + "</div>"];
-    if (data.label) lines.push('<div class="note">账号：' + esc(data.label) + "</div>");
-    if (data.model_count) lines.push('<div class="note">可用模型：' + esc(data.model_count) + " 个</div>");
-    if (data.expires_at) lines.push('<div class="note">会话有效期至：' + esc(data.expires_at) + "</div>");
-    (data.warnings || []).forEach(function (w) {
-      lines.push('<div class="note bad">' + esc(w) + "</div>");
-    });
-    host.innerHTML = '<div class="toast ok" style="max-width:none">' + lines.join("") + "</div>";
-  }
-
   /* ---------- actions ---------- */
 
   var actions = {
@@ -404,63 +376,10 @@ func panelScript() string {
     },
 
     openLogin: function () {
-      // 两个入口共用：表头的「添加账号」展开表单并直接开登录页；
-      // 表单里的「打开登录页」只开页面。先展开再打开，用户关掉登录页
-      // 回到控制台时能看到表单，而不是面对一个什么都没有的页面。
-      var section = document.getElementById("authSection");
-      if (section) section.hidden = false;
-      var realm = segValue("authRealmSeg") || storageGet(AUTH_REALM_KEY) || "doubao";
-      storageSet(AUTH_REALM_KEY, realm);
+      // 账号页只有这一个添加入口：直接开登录页。上游跟着设置里的默认上游走，
+      // 登录页自己会按它建会话。
+      var realm = storageGet(AUTH_REALM_KEY) || "doubao";
       window.open(LOGIN_PATH + "?realm=" + encodeURIComponent(realm), "_blank");
-    },
-
-    pickAuthRealm: function (value) {
-      segSelect("authRealmSeg", value);
-      storageSet(AUTH_REALM_KEY, value);
-      var host = document.getElementById("authResult");
-      if (host) host.innerHTML = "";
-    },
-
-    clearAuthForm: function () {
-      var ta = document.getElementById("authCookies");
-      var lb = document.getElementById("authLabel");
-      if (ta) ta.value = "";
-      if (lb) lb.value = "";
-      var host = document.getElementById("authResult");
-      if (host) host.innerHTML = "";
-    },
-
-    submitAuthorize: function () {
-      var ta = document.getElementById("authCookies");
-      var lb = document.getElementById("authLabel");
-      var btn = document.getElementById("authSubmit");
-      if (!ta) return;
-      var cookies = (ta.value || "").trim();
-      if (!cookies) { showAuthorizeResult({ error: "请先粘贴 Cookie。" }, false); return; }
-      if (!key()) { showAuthorizeResult({ error: "请先在「设置」里保存管理密钥。" }, false); return; }
-
-      if (btn) { btn.disabled = true; btn.textContent = "校验中…"; }
-      var host = document.getElementById("authResult");
-      if (host) host.innerHTML = '<div class="note">正在向上游校验…</div>';
-
-      write("/authorize", {
-        cookies: cookies,
-        realm: selectedAuthRealm(),
-        label: lb ? (lb.value || "").trim() : ""
-      }).then(function (data) {
-        showAuthorizeResult(data, true);
-        if (data && data.ok) {
-          ta.value = "";
-          if (lb) lb.value = "";
-          loadAccounts();
-        }
-      }).catch(function (e) {
-        // A rejected credential comes back as a structured 400, so the body
-        // carries the actionable hint even though the status is an error.
-        showAuthorizeResult(e.data || { error: e.message }, false);
-      }).then(function () {
-        if (btn) { btn.disabled = false; btn.textContent = "校验并授权"; }
-      });
     },
 
     setRealm: function (value) {
@@ -484,11 +403,6 @@ func panelScript() string {
     setExpose: function (value) {
       segSelect("exposeSeg", value);
       setSetting("expose_models", value === "on", "exposeMsg");
-    },
-
-    setDebug: function (value) {
-      segSelect("debugSeg", value);
-      setSetting("debug", value === "on", "debugMsg");
     },
 
     saveNum: function (inputId, name) {
@@ -592,7 +506,6 @@ func panelScript() string {
   function boot() {
     restoreView();
     refreshKeyState();
-    segSelect("authRealmSeg", storageGet(AUTH_REALM_KEY) || "doubao");
     if (!key()) {
       note("accountMsg", "请先在「设置」里保存管理密钥", "bad");
       return;
