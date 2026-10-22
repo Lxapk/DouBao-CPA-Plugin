@@ -33,6 +33,7 @@ const (
 	blockTypeText       = 10000 // BLOCK_TYPE_TEXT
 	blockTypeGenImage   = 10010 // BLOCK_TYPE_GEN_IMAGE
 	blockTypeImage      = 10012 // BLOCK_TYPE_IMAGE
+	blockTypeAttachment = 10052 // BLOCK_TYPE_ATTACHMENT：用户上传的图片/文件
 	blockTypeCreation   = 2074  // BLOCK_TYPE_CREATION
 	blockTypeDeepThink  = 10040 // BLOCK_TYPE_DEEP_THINK
 	blockTypeArtifact   = 10030 // BLOCK_TYPE_ARTIFACT

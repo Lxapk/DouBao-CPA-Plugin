@@ -191,6 +191,26 @@ func (r *chatRequest) requireMessages() error {
 	return nil
 }
 
+// messagesImages 取出最后一条用户消息里的图片。
+//
+// 只取最后一条：上游的会话是一轮一轮的，把历史消息里的图片也重发会让同一次
+// 请求携带多张图，既浪费额度也可能触发数量限制。
+func (r *chatRequest) messagesImages() ([]imagePart, error) {
+	if r.Surface != surfaceChat || len(r.Messages) == 0 {
+		return nil, nil
+	}
+	var msgs []chatMessage
+	if errUnmarshal := json.Unmarshal(r.Messages, &msgs); errUnmarshal != nil {
+		return nil, nil
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if strings.EqualFold(msgs[i].Role, "user") {
+			return msgs[i].extractImages(), nil
+		}
+	}
+	return nil, nil
+}
+
 // promptText returns the text to send upstream for whichever surface arrived.
 //
 // Chat folds its transcript into one prompt; the media endpoints send their
@@ -551,8 +571,17 @@ func executeExchange(creds *credentials, chat *chatRequest, onDelta func(string)
 	if errPrompt != nil {
 		return nil, nil, errPrompt
 	}
-	if strings.TrimSpace(prompt) == "" {
-		return nil, nil, errors.New("请求中没有可发送的文本内容")
+	images, errImages := chat.messagesImages()
+	if errImages != nil {
+		return nil, nil, errImages
+	}
+	// 图片必须能真正发出去。以前这里静默丢图，用户只看到模型说"没收到图片"。
+	if errUnsupported := checkImagesSupported(images); errUnsupported != nil {
+		return nil, nil, errUnsupported
+	}
+	// 只有图片、没有文字也是合法请求（"这是什么"由图片本身表达）。
+	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
+		return nil, nil, errors.New("请求中没有可发送的内容")
 	}
 
 	// The model alias decides whether this is chat or a generation.
@@ -583,7 +612,7 @@ func executeExchange(creds *credentials, chat *chatRequest, onDelta func(string)
 	}
 
 	started := time.Now()
-	result, errRun := runCompletionWith(ctx, creds, prompt, mode, conversationID, needCreate, onDelta)
+	result, errRun := runCompletionWithImages(ctx, creds, prompt, mode, conversationID, needCreate, onDelta, images)
 	if errRun != nil {
 		return nil, nil, errRun
 	}
@@ -616,8 +645,15 @@ func executeExchangeResult(creds *credentials, chat *chatRequest, onDelta func(s
 	if errPrompt != nil {
 		return nil, errPrompt
 	}
-	if strings.TrimSpace(prompt) == "" {
-		return nil, errors.New("请求中没有可发送的文本内容")
+	images, errImages := chat.messagesImages()
+	if errImages != nil {
+		return nil, errImages
+	}
+	if errUnsupported := checkImagesSupported(images); errUnsupported != nil {
+		return nil, errUnsupported
+	}
+	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
+		return nil, errors.New("请求中没有可发送的内容")
 	}
 
 	mode := modeForRequest(chat)
@@ -639,7 +675,7 @@ func executeExchangeResult(creds *credentials, chat *chatRequest, onDelta func(s
 		needCreate = true
 	}
 
-	result, errRun := runCompletionWith(ctx, creds, prompt, mode, conversationID, needCreate, onDelta)
+	result, errRun := runCompletionWithImages(ctx, creds, prompt, mode, conversationID, needCreate, onDelta, images)
 	if errRun != nil {
 		return nil, errRun
 	}

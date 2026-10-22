@@ -84,7 +84,25 @@ type requestBlock struct {
 
 type requestBlockBody struct {
 	TextBlock    *textBlockPayload `json:"text_block,omitempty"`
+	Attachment   *attachmentBlock  `json:"-"`
 	PCEventBlock string            `json:"pc_event_block"`
+}
+
+// MarshalJSON 让附件块与文本块共用同一层 content。
+//
+// 真实结构是 content.attachment_block.attachments[…]，而 attachmentBlock 自身
+// 就代表 attachment_block 的值；直接内嵌会多套一层。
+func (b requestBlockBody) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		TextBlock    *textBlockPayload `json:"text_block,omitempty"`
+		Attachment   *attachmentBlock  `json:"attachment_block,omitempty"`
+		PCEventBlock string            `json:"pc_event_block"`
+	}
+	return json.Marshal(alias{
+		TextBlock:    b.TextBlock,
+		Attachment:   b.Attachment,
+		PCEventBlock: b.PCEventBlock,
+	})
 }
 
 type textBlockPayload struct {
@@ -151,6 +169,14 @@ type modelConfig struct {
 // generation. It is what distinguishes "describe the picture" from "draw the
 // picture".
 func buildCompletionRequest(creds *credentials, text string, mode generationMode, conversationID, lastSectionID string, lastMessageIndex int64) *completionRequest {
+	return buildCompletionRequestWithImages(creds, text, mode, conversationID, lastSectionID, lastMessageIndex, nil)
+}
+
+// buildCompletionRequestWithImages 是带图片的版本。
+//
+// 图片与文本同属一条消息的 content_block 列表：附件块在前，文本块在后，
+// 与网页端的顺序一致（附件块 block_type=10052，文本块 10000）。
+func buildCompletionRequestWithImages(creds *credentials, text string, mode generationMode, conversationID, lastSectionID string, lastMessageIndex int64, images []imagePart) *completionRequest {
 	now := nowMillis()
 
 	// "0" 表示交给上游挑默认模型；指定了具体模型时用它的 model_item_key。
@@ -239,27 +265,46 @@ func buildCompletionRequest(creds *credentials, text string, mode generationMode
 		Messages: []completionMsg{{
 			LocalMessageID: randomUUID(),
 			MessageStatus:  0,
-			ContentBlock: []requestBlock{{
-				BlockType:    blockTypeText,
-				BlockID:      randomUUID(),
-				ParentID:     "",
-				MetaInfo:     []any{},
-				AppendFields: []any{},
-				Content: requestBlockBody{
-					TextBlock: &textBlockPayload{
-						Text:        text,
-						IconURL:     "",
-						IconURLDark: "",
-						Summary:     "",
-					},
-					PCEventBlock: "",
-				},
-			}},
+			ContentBlock:   buildContentBlocks(text, images),
 		}},
 		Option:      option,
 		UserContext: []any{},
 		Ext:         ext,
 	}
+}
+
+// buildContentBlocks 组装一条消息的内容块。
+//
+// 附件块在前、文本块在后，与网页端一致。图片无法使用时返回的错误由调用方
+// 转成用户可见的提示。
+func buildContentBlocks(text string, images []imagePart) []requestBlock {
+	blocks := make([]requestBlock, 0, len(images)+1)
+
+	if attachments, errAttach := buildAttachmentBlocks(images); errAttach == nil {
+		blocks = append(blocks, attachments...)
+	}
+	// errAttach 不为空时这里不追加附件块：调用方在更早的地方已经拒绝了请求，
+	// 不该走到这里。
+
+	if strings.TrimSpace(text) != "" {
+		blocks = append(blocks, requestBlock{
+			BlockType:    blockTypeText,
+			BlockID:      randomUUID(),
+			ParentID:     "",
+			MetaInfo:     []any{},
+			AppendFields: []any{},
+			Content: requestBlockBody{
+				TextBlock: &textBlockPayload{
+					Text:        text,
+					IconURL:     "",
+					IconURLDark: "",
+					Summary:     "",
+				},
+				PCEventBlock: "",
+			},
+		})
+	}
+	return blocks
 }
 
 // generationMode describes what kind of answer a request asks for.

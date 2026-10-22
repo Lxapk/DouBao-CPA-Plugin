@@ -370,6 +370,26 @@ func renderGuideView() string {
 		`<code>710022003 CountryRestricted</code>）。</div>`)
 
 	// ---- limits ----
+	b.WriteString(`<div class="group-head"><h2>图片输入</h2>` +
+		`<span class="desc">在 messages 里放 image_url 即可</span></div>`)
+	b.WriteString(`<div class="box"><div class="pad">`)
+	b.WriteString(`<pre class="code">{
+  "model": "doubao/default",
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "这张图里是什么"},
+      {"type": "image_url", "image_url": {"url": "https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-.../x.jpeg"}}
+    ]
+  }]
+}</pre>`)
+	b.WriteString(`<div class="note" style="margin-top:10px">图片会作为附件块（block_type 10052）随消息发出，` +
+		`与网页端上传图片后的请求一致。只发图片、不带文字也可以。</div>`)
+	b.WriteString(`<div class="note bad" style="margin-top:8px">目前只支持豆包已有的图片资源地址` +
+		`（<code>....byteimg.com/tos-cn-i-…</code>）。外链与 base64 内联图片需要先上传到豆包，` +
+		`上传链路未实现，这类请求会明确报错而不是静默丢图。</div>`)
+	b.WriteString(`</div></div>`)
+
 	b.WriteString(`<div class="group-head"><h2>已知限制</h2></div>`)
 	b.WriteString(`<div class="box"><div class="pad">`)
 	for _, line := range []string{

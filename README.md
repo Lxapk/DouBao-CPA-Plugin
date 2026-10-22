@@ -15,6 +15,8 @@
 | **图片生成** | ✅ 可用 | `/v1/images/generations`（`doubao/image`），也支持在 `/v1/chat/completions` 返回多模态 `image_url` |
 | **视频生成** | ✅ 可用 | `/v1/videos`（`doubao/video`），沿用返回里也带 URL 与 `media` 扩展 |
 | 手机号登录 | ✅ 可用 | 插件内填手机号收短信验证码，不需要复制 Cookie |
+| 图片输入 | ✅ 可用 | `messages` 里放 `image_url`，作为附件块随消息发出 |
+| 多模型 | ✅ 可用 | Seedream 4.0/4.5/5.0 与 Seedance 2.0/2.5 各自独立别名 |
 | 双上游 | ✅ 可用 | 同一插件支持豆包与 Dola 两套账号 |
 | 会话列表 | ✅ 可用 | 自动获取会话，无需手工配置 |
 | 控制台面板 | ✅ 可用 | 账号 / 统计 / 说明 / 设置四页，与 Tinker 插件同一套界面 |

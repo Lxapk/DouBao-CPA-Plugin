@@ -57,10 +57,15 @@ func runCompletion(ctx context.Context, creds *credentials, text string, mode ge
 
 // runCompletionWith is runCompletion with explicit conversation control.
 func runCompletionWith(ctx context.Context, creds *credentials, text string, mode generationMode, conversationID string, needCreate bool, onDelta func(string)) (*conversationResult, error) {
+	return runCompletionWithImages(ctx, creds, text, mode, conversationID, needCreate, onDelta, nil)
+}
+
+// runCompletionWithImages 是带图片的版本。
+func runCompletionWithImages(ctx context.Context, creds *credentials, text string, mode generationMode, conversationID string, needCreate bool, onDelta func(string), images []imagePart) (*conversationResult, error) {
 	client := newClient(creds)
 	client.debug = debugLogger()
 
-	body := buildCompletionRequest(creds, text, mode, conversationID, "", 0)
+	body := buildCompletionRequestWithImages(creds, text, mode, conversationID, "", 0, images)
 	if needCreate {
 		body.Option.NeedCreateConversation = true
 	}
