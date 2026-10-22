@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -16,9 +17,9 @@ func TestXorHexMatchesClient(t *testing.T) {
 	if got := xorHex("1"); got != "34" {
 		t.Errorf("xorHex(\"1\") = %q, 期望 34", got)
 	}
-	// "28" -> '2'=0x32^5=0x37, '8'=0x38^5=0x3d
-	if got := xorHex(smsLoginType); got != "373d" {
-		t.Errorf("xorHex(%q) = %q, 期望 373d", smsLoginType, got)
+	// "24" -> '2'=0x32^5=0x37, '4'=0x34^5=0x31
+	if got := xorHex(smsLoginType); got != "3731" {
+		t.Errorf("xorHex(%q) = %q, 期望 3731", smsLoginType, got)
 	}
 	// 往返可逆，避免以后误改成别的编码。
 	for _, s := range []string{"13800138000", "123456", "a-b c"} {
@@ -49,6 +50,20 @@ func TestNormalizePhone(t *testing.T) {
 	}
 }
 
+// 加密前的 mobile 必须带 "+86 " 前缀，否则上游回 1003「手机号错误」。
+// 这里的十六进制是浏览器真实请求里抓到的值，可以直接对照。
+func TestPassportMobileMatchesBrowser(t *testing.T) {
+	if got := passportMobile("13800138000"); got != "+86 13800138000" {
+		t.Errorf("passportMobile = %q", got)
+	}
+	if got := xorHex(passportMobile("13800138000")); got != "2e3d332534363d353534363d353535" {
+		t.Errorf("加密结果 = %q, 期望与浏览器一致", got)
+	}
+	if strings.Contains(passportMobile("13800138000"), "%") {
+		t.Error("mobile 不应做 URL 转义")
+	}
+}
+
 // 手机号只在需要时脱敏，且不泄露中间四位。
 func TestMaskPhone(t *testing.T) {
 	if got := maskPhone("13800138000"); got != "138****8000" {
@@ -69,8 +84,8 @@ func TestPassportError(t *testing.T) {
 	}
 	cases := []struct{ body, hint string }{
 		{`{"message":"操作太频繁"}`, "等一分钟"},
-		{`{"message":"验证码错误"}`, "重新获取"},
-		{`{"message":"手机号格式不正确"}`, "11 位"},
+		{`{"message":"验证码错误，请重新输入"}`, "重新获取"},
+		{`{"message":"手机号错误，请重新填写"}`, "11 位"},
 		{`{"message":"risk control"}`, "风控"},
 	}
 	for _, c := range cases {
@@ -177,5 +192,55 @@ func TestPanelLoginPathSelectsRealm(t *testing.T) {
 	}
 	if !strings.Contains(script, "openLogin: function") {
 		t.Error("面板缺少 openLogin 动作")
+	}
+}
+
+// readSourceForTest 读源码文本，用于断言「某段代码里没有出现某个调用」。
+func readSourceForTest(t *testing.T, name string) string {
+	t.Helper()
+	raw, errRead := os.ReadFile(name)
+	if errRead != nil {
+		t.Skipf("读不到 %s: %v", name, errRead)
+	}
+	return string(raw)
+}
+
+// 请求形状必须与网页端一致：换成 App 的接口或少了 jssdk 参数，上游都会回
+// 「该应用无权限」(error_code 16)。这里把三处关键值钉住，避免以后误改。
+func TestPassportRequestShape(t *testing.T) {
+	if passportHost != "https://accounts.doubao.com" {
+		t.Errorf("passportHost = %q", passportHost)
+	}
+	if passportSendCodePath != "/passport/web/send_code/" {
+		t.Errorf("发码路径 = %q", passportSendCodePath)
+	}
+	// validate_code 是 App 侧接口，网页端登录用 sms_login。
+	if passportLoginPath != "/passport/web/sms_login/" {
+		t.Errorf("登录路径 = %q", passportLoginPath)
+	}
+
+	query := passportQuery("497858")
+	for _, want := range []string{
+		"passport_jssdk_version=", "passport_jssdk_type=normal",
+		"is_from_ttaccountsdk=1", "aid=497858", "language=zh",
+	} {
+		if !strings.Contains(query, want) {
+			t.Errorf("query 缺少 %s: %s", want, query)
+		}
+	}
+}
+
+// 登录请求不带 type，改用 login_only / ignore_lark_account。
+func TestLoginFormHasNoType(t *testing.T) {
+	src := readSourceForTest(t, "phone_login.go")
+	loginPart := src[strings.Index(src, "func loginWithCode"):]
+	loginPart = loginPart[:strings.Index(loginPart, "\n}")]
+	if strings.Contains(loginPart, `Set("type"`) {
+		t.Error("登录请求不应带 type")
+	}
+	for _, want := range []string{`"login_only"`, `"ignore_lark_account"`, `"is6Digits"`} {
+		if !strings.Contains(loginPart, want) && want != `"is6Digits"` {
+			t.Errorf("登录请求缺少 %s", want)
+		}
 	}
 }

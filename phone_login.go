@@ -31,12 +31,19 @@ import (
 // 即每个字节异或 5 之后转十六进制。这是固定算法，不依赖设备，照做即可。
 
 // passportEndpoints 是登录用到的两个路径。
+//
+// 走的是网页账号中心（accounts.doubao.com）的 passport web 接口，不是 App 的
+// mobile 接口：后者按应用签名鉴权，第三方请求一律 "该应用无权限"（error_code 16）。
+// web 接口只需要 aid 与 passport jssdk 的版本参数，实测可直接发码。
 const (
-	passportSendCodePath = "/passport/mobile/sms_login_only/"
-	passportLoginPath    = "/passport/mobile/validate_code/v1/"
-	// smsLoginType 是 validate_code 的 type 参数。客户端固定传 28，对应
-	// 「短信验证码登录」这一种校验方式。
-	smsLoginType = "28"
+	// passportHost 是账号中心。它与 www.doubao.com 同源 Cookie 域，
+	// 但 passport 接口只在这个域名下开放。
+	passportHost         = "https://accounts.doubao.com"
+	passportSendCodePath = "/passport/web/send_code/"
+	// 校验走 sms_login：validate_code 是 App 侧的接口，网页端用的是这个。
+	passportLoginPath = "/passport/web/sms_login/"
+	// smsLoginType 是 send_code 的 type 参数，24 对应「短信验证码登录」。
+	smsLoginType = "24"
 )
 
 // phoneLoginError 把上游的拒绝翻译成人能处理的一句话。
@@ -51,6 +58,32 @@ func (e *phoneLoginError) Error() string {
 		return e.Message + "（" + e.Hint + "）"
 	}
 	return e.Message
+}
+
+// passportQuery 是 web passport 接口要求的固定 query。
+//
+// 缺 passport_jssdk_* 时网关会当成非法来源；aid 决定下发哪个应用的短信模板。
+func passportQuery(aid string) string {
+	q := url.Values{}
+	q.Set("passport_jssdk_version", "4.1.5-beta.0")
+	q.Set("passport_jssdk_type", "normal")
+	q.Set("is_from_ttaccountsdk", "1")
+	q.Set("aid", aid)
+	q.Set("language", "zh")
+	return "?" + q.Encode()
+}
+
+// passportMobile 是 mobile 字段加密前的原文。
+//
+// 网页端发的是 "+86 13800138000"：国际区号、一个空格、11 位号码。少了 +86 或
+// 空格都会得到 1003「手机号错误」。这里不做 URL 转义——实测转义后的 "+" 会被
+// 当成字面量，反而解码不出号码。
+func passportMobile(phone string) string {
+	digits := normalizePhone(phone)
+	if digits == "" {
+		digits = strings.TrimSpace(phone)
+	}
+	return "+86 " + digits
 }
 
 // xorHex 复现客户端的 encryptWithXor：逐字节异或 5，再转十六进制。
@@ -131,15 +164,14 @@ func passportError(payload []byte) *phoneLoginError {
 func sendLoginCode(ctx context.Context, r realm, phone string) error {
 	profile := profileFor(r)
 	form := url.Values{}
-	form.Set("mobile", xorHex(url.QueryEscape(phone)))
+	form.Set("mobile", xorHex(passportMobile(phone)))
 	form.Set("mix_mode", "1")
 	form.Set("type", xorHex(smsLoginType))
-	// 客户端还会带这些固定参数；缺了会被当成非官方客户端。
-	form.Set("aid", profile.AID)
-	form.Set("service", profile.AID)
-	form.Set("device_platform", "android")
+	form.Set("is6Digits", "1")
+	form.Set("fixed_mix_mode", "1")
 
-	resp, payload, errDo := passportRequest(ctx, profile.Host, passportSendCodePath, form)
+	query := passportQuery(profile.AID)
+	resp, payload, errDo := passportRequest(ctx, passportHost, passportSendCodePath+query, form)
 	if errDo != nil {
 		return errDo
 	}
@@ -159,17 +191,16 @@ func sendLoginCode(ctx context.Context, r realm, phone string) error {
 func loginWithCode(ctx context.Context, r realm, phone string, code string) (string, error) {
 	profile := profileFor(r)
 	form := url.Values{}
-	form.Set("mobile", xorHex(url.QueryEscape(phone)))
+	form.Set("mobile", xorHex(passportMobile(phone)))
 	form.Set("code", xorHex(code))
 	form.Set("mix_mode", "1")
 	form.Set("fixed_mix_mode", "1")
-	form.Set("type", xorHex(smsLoginType))
-	form.Set("need_ticket", "1")
-	form.Set("aid", profile.AID)
-	form.Set("service", profile.AID)
-	form.Set("device_platform", "android")
+	// 登录请求不带 type，改为 login_only / ignore_lark_account 两个开关。
+	form.Set("login_only", "false")
+	form.Set("ignore_lark_account", "true")
 
-	resp, payload, errDo := passportRequest(ctx, profile.Host, passportLoginPath, form)
+	query := passportQuery(profile.AID)
+	resp, payload, errDo := passportRequest(ctx, passportHost, passportLoginPath+query, form)
 	if errDo != nil {
 		return "", errDo
 	}
