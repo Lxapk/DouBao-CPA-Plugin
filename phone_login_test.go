@@ -299,3 +299,87 @@ func TestValidateAcceptsSecUserIDWithoutFlowCookie(t *testing.T) {
 		t.Error("缺少账号标识时应拒绝")
 	}
 }
+
+// 每个具体模型必须能解析出正确的端点归属、技能 ID 和 model_item_key。
+// 弄错任何一个都会得到「要它画图却回一段文字」或「用了默认模型」。
+func TestModelCatalogue(t *testing.T) {
+	type want struct {
+		kind  string
+		skill int
+		key   string
+	}
+	cases := map[string]want{
+		"default":            {kindChat, 0, ""},
+		"pro":                {kindChat, 0, ""},
+		"image":              {kindImage, skillImageGen, ""},
+		"seedream-5.0-pro":   {kindImage, skillImageGen, "seedream_5.0_pro"},
+		"seedream-5.0-flash": {kindImage, skillImageGen, "seedream_5.0"},
+		"seedream-4.5":       {kindImage, skillImageGen, "seedream_4.5"},
+		"seedream-4.0":       {kindImage, skillImageGen, "seedream_4.0"},
+		"video":              {kindVideo, skillVideoGen, ""},
+		"seedance-2.5":       {kindVideo, skillVideoGen, "seedance_2.5"},
+		"seedance-2.0":       {kindVideo, skillVideoGen, "seedance_2.0"},
+		"seedance-2.0-fast":  {kindVideo, skillVideoGen, "seedance_2.0_fast"},
+		"seedance-2.0-mini":  {kindVideo, skillVideoGen, "seedance_2.0_mini"},
+	}
+	for name, w := range cases {
+		// 带与不带上游前缀都应按同一别名解析。
+		for _, model := range []string{name, "doubao/" + name, "dola/" + name} {
+			if got := kindForModel(model); got != w.kind {
+				t.Errorf("kindForModel(%q) = %q, 期望 %q", model, got, w.kind)
+			}
+			if got := skillForModel(model); got != w.skill {
+				t.Errorf("skillForModel(%q) = %d, 期望 %d", model, got, w.skill)
+			}
+			if got := modelKeyFor(model); got != w.key {
+				t.Errorf("modelKeyFor(%q) = %q, 期望 %q", model, got, w.key)
+			}
+		}
+	}
+}
+
+// 图片端点的 /v1/models 条目要带上 openai-image 类型，且每个具体模型都要出现。
+func TestCatalogueListsEveryModel(t *testing.T) {
+	models := buildCatalogue()
+	seen := map[string]string{}
+	for _, m := range models {
+		seen[m.ID] = m.Type
+	}
+	for _, id := range []string{
+		"seedream-5.0-pro", "seedream-5.0-flash", "seedream-4.5", "seedream-4.0",
+	} {
+		typ, ok := seen[id]
+		if !ok {
+			t.Errorf("目录缺少 %s", id)
+			continue
+		}
+		if typ != "openai-image" {
+			t.Errorf("%s 类型 = %q, 期望 openai-image", id, typ)
+		}
+	}
+	for _, id := range []string{"seedance-2.5", "seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"} {
+		if _, ok := seen[id]; !ok {
+			t.Errorf("目录缺少 %s", id)
+		}
+	}
+}
+
+// 请求里的 model_item_key 必须真的带上所选模型。
+func TestCompletionRequestCarriesModelKey(t *testing.T) {
+	creds := &credentials{Realm: realmDoubao, BotID: "1", Cookies: "sessionid=x"}
+	req := buildCompletionRequest(creds, "一只猫", generationMode{
+		Skill: skillImageGen, Kind: kindImage, ModelKey: "seedream_5.0_pro",
+	}, "conv", "", 0)
+	if req.Option.ModelConfig.ModelItemKey != "seedream_5.0_pro" {
+		t.Errorf("ModelConfig.ModelItemKey = %q", req.Option.ModelConfig.ModelItemKey)
+	}
+	if req.Option.AggregateParams.ModelItemKey != "seedream_5.0_pro" {
+		t.Errorf("AggregateParams.ModelItemKey = %q", req.Option.AggregateParams.ModelItemKey)
+	}
+
+	// 未指定模型时回落为 "0"（交给上游挑默认）。
+	req = buildCompletionRequest(creds, "hi", generationMode{Kind: kindChat}, "conv", "", 0)
+	if req.Option.ModelConfig.ModelItemKey != "0" {
+		t.Errorf("默认 ModelItemKey = %q, 期望 0", req.Option.ModelConfig.ModelItemKey)
+	}
+}

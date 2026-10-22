@@ -153,6 +153,12 @@ type modelConfig struct {
 func buildCompletionRequest(creds *credentials, text string, mode generationMode, conversationID, lastSectionID string, lastMessageIndex int64) *completionRequest {
 	now := nowMillis()
 
+	// "0" 表示交给上游挑默认模型；指定了具体模型时用它的 model_item_key。
+	modelItemKey := strings.TrimSpace(mode.ModelKey)
+	if modelItemKey == "" {
+		modelItemKey = "0"
+	}
+
 	option := completionOption{
 		SendMessageScene:  "",
 		CreateTimeMS:      now,
@@ -168,13 +174,13 @@ func buildCompletionRequest(creds *credentials, text string, mode generationMode
 			MentionExt:        "[{}]",
 			ConversationMode:  "",
 			ModeID:            "1",
-			ModelItemKey:      "0",
+			ModelItemKey:      modelItemKey,
 			AgentMode:         "2",
 			ReasoningEffort:   "3",
 			ProviderID:        "",
 		},
 		ModelConfig: modelConfig{
-			ModelItemKey:     "0",
+			ModelItemKey:     modelItemKey,
 			ModelExtraParams: map[string]any{},
 			ReasoningEffort:  3,
 		},
@@ -264,6 +270,8 @@ type generationMode struct {
 	Kind string
 	// DeepThink asks the upstream to reason before answering.
 	DeepThink bool
+	// ModelKey 是上游 model_item_key；空表示用账号默认模型。
+	ModelKey string
 }
 
 // completionEvent is one decoded SSE event.

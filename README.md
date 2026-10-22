@@ -78,14 +78,30 @@ plugins:
 模型名可加前缀指定上游，不加前缀时使用配置的默认上游：
 
 ```
-doubao/default    豆包 · 默认助手
-doubao/pro        豆包 · 深度思考
-doubao/image      豆包 · 图像生成
-doubao/video      豆包 · 视频生成
-dola/default      Dola · 默认助手
-dola/image        Dola · 图像生成
-default           默认上游的默认助手
+# 文本
+doubao/default              默认助手
+doubao/pro                  深度思考
+
+# 图片（Seedream 系列）
+doubao/image                账号默认出图模型
+doubao/seedream-5.0-pro     Seedream 5.0 Pro    专业出图 · 4 倍消耗
+doubao/seedream-5.0-flash   Seedream 5.0 Flash  专业快速
+doubao/seedream-4.5         Seedream 4.5        日常生成（网页端默认）
+doubao/seedream-4.0         Seedream 4.0        基础生图
+
+# 视频（Seedance 系列）
+doubao/video                账号默认视频模型
+doubao/seedance-2.5         Seedance 2.5        旗舰视频 · 5 倍消耗
+doubao/seedance-2.0         Seedance 2.0        进阶画面 · 2 倍消耗
+doubao/seedance-2.0-fast    Seedance 2.0 Fast   快速出片
+doubao/seedance-2.0-mini    Seedance 2.0 Mini   日常生成
+
+# 换上游只需换前缀
+dola/seedream-4.5           Dola · Seedream 4.5
+default                     默认上游的默认助手
 ```
+
+模型清单本身由豆包服务端下发，插件按版本把别名映射到上游的 `model_item_key`。高级模型（5.0 Pro、2.5）需要订阅，额度不足或未订阅时上游会拒绝。
 
 ### 文本
 

@@ -657,9 +657,10 @@ func executeExchangeResult(creds *credentials, chat *chatRequest, onDelta func(s
 func modeForRequest(r *chatRequest) generationMode {
 	switch r.Surface {
 	case surfaceImage:
-		return generationMode{Skill: skillImageGen, Kind: kindImage}
+		// 端点是图片，但具体模型由模型名决定；没指定就用默认。
+		return generationMode{Skill: skillImageGen, Kind: kindImage, ModelKey: modelKeyFor(r.Model)}
 	case surfaceVideo:
-		return generationMode{Skill: skillVideoGen, Kind: kindVideo}
+		return generationMode{Skill: skillVideoGen, Kind: kindVideo, ModelKey: modelKeyFor(r.Model)}
 	}
 	return modeForModel(r.Model)
 }
@@ -671,11 +672,11 @@ func modeForModel(model string) generationMode {
 		return generationMode{Skill: 0, Kind: "text", DeepThink: deepThinkForModel(model)}
 	}
 	name, _ := stripModelPrefix(normalizeModelName(model))
-	kind := "image"
-	if strings.EqualFold(name, "video") {
-		kind = "video"
+	kind := kindImage
+	if strings.HasPrefix(strings.ToLower(name), "video") || strings.HasPrefix(strings.ToLower(name), "seedance") {
+		kind = kindVideo
 	}
-	return generationMode{Skill: skill, Kind: kind}
+	return generationMode{Skill: skill, Kind: kind, ModelKey: modelKeyFor(model)}
 }
 
 // attachCreationAssets converts generated media into OpenAI multimodal content.

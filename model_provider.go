@@ -40,6 +40,12 @@ type modelAlias struct {
 	// Kind is the OpenAI surface this alias answers on: "chat", "image" or
 	// "video". It decides which endpoint may route to it.
 	Kind string
+	// ModelKey 是上游 model_item_key，用来在创作场景里指定具体模型。
+	//
+	// 模型清单本身由服务端下发（App 的图片/视频选择器就是读它），所以这里是
+	// 按已知版本做的映射；键名与 APK 资源里的 larus_imageGen_model_menu_* /
+	// larus_aiVideo_tag_seedance_* 一一对应。留空表示交给上游选默认模型。
+	ModelKey string
 	// DeepThink asks the upstream to reason before answering. It is a flag on the
 	// request rather than a skill, so the two are modelled separately.
 	DeepThink bool
@@ -111,23 +117,110 @@ var capabilityAliases = []modelAlias{
 		DeepThink:     true,
 		Kind:          kindChat,
 	},
+
+	// ---- 图片：Seedream 系列（APK 资源 larus_imageGen_model_menu_*）----
 	{
-		ID:            "image",
-		DisplayName:   "图像生成",
-		Description:   "生成图片。回复以 OpenAI 多模态 content 返回，图片地址在 image_url 中。",
-		UpstreamModel: "",
-		// Skill is the upstream capability to activate for this alias.
-		Skill: skillImageGen,
-		Kind:  kindImage,
+		ID:          "image",
+		DisplayName: "图像生成（默认）",
+		Description: "按账号默认的出图模型生成，等价于网页端直接出图。",
+		Skill:       skillImageGen,
+		Kind:        kindImage,
 	},
 	{
-		ID:            "video",
-		DisplayName:   "视频生成",
-		Description:   "生成视频。视频地址以文本与 media 扩展字段返回。",
-		UpstreamModel: "",
-		Skill:         skillVideoGen,
-		Kind:          kindVideo,
+		ID:          "seedream-5.0-pro",
+		DisplayName: "Seedream 5.0 Pro",
+		Description: "专业出图，4 倍消耗。",
+		Skill:       skillImageGen,
+		Kind:        kindImage,
+		ModelKey:    "seedream_5.0_pro",
 	},
+	{
+		ID:          "seedream-5.0-flash",
+		DisplayName: "Seedream 5.0 Flash",
+		Description: "专业快速。",
+		Skill:       skillImageGen,
+		Kind:        kindImage,
+		ModelKey:    "seedream_5.0",
+	},
+	{
+		ID:          "seedream-4.5",
+		DisplayName: "Seedream 4.5",
+		Description: "日常生成。",
+		Skill:       skillImageGen,
+		Kind:        kindImage,
+		ModelKey:    "seedream_4.5",
+	},
+	{
+		ID:          "seedream-4.0",
+		DisplayName: "Seedream 4.0",
+		Description: "基础生图。",
+		Skill:       skillImageGen,
+		Kind:        kindImage,
+		ModelKey:    "seedream_4.0",
+	},
+
+	// ---- 视频：Seedance 系列（APK 资源 larus_aiVideo_tag_seedance_*）----
+	{
+		ID:          "video",
+		DisplayName: "视频生成（默认）",
+		Description: "按账号默认的视频模型生成。",
+		Skill:       skillVideoGen,
+		Kind:        kindVideo,
+	},
+	{
+		ID:          "seedance-2.5",
+		DisplayName: "Seedance 2.5",
+		Description: "旗舰视频标杆，5 倍消耗。",
+		Skill:       skillVideoGen,
+		Kind:        kindVideo,
+		ModelKey:    "seedance_2.5",
+	},
+	{
+		ID:          "seedance-2.0",
+		DisplayName: "Seedance 2.0",
+		Description: "进阶画面表现，2 倍消耗。",
+		Skill:       skillVideoGen,
+		Kind:        kindVideo,
+		ModelKey:    "seedance_2.0",
+	},
+	{
+		ID:          "seedance-2.0-fast",
+		DisplayName: "Seedance 2.0 Fast",
+		Description: "快速出片选择。",
+		Skill:       skillVideoGen,
+		Kind:        kindVideo,
+		ModelKey:    "seedance_2.0_fast",
+	},
+	{
+		ID:          "seedance-2.0-mini",
+		DisplayName: "Seedance 2.0 Mini",
+		Description: "日常生成使用。",
+		Skill:       skillVideoGen,
+		Kind:        kindVideo,
+		ModelKey:    "seedance_2.0_mini",
+	},
+}
+
+// modelKeyFor 返回一个别名对应的上游 model_item_key。
+func modelKeyFor(requested string) string {
+	name, _ := stripModelPrefix(normalizeModelName(requested))
+	for _, alias := range capabilityAliases {
+		if strings.EqualFold(name, alias.ID) {
+			return alias.ModelKey
+		}
+	}
+	return ""
+}
+
+// aliasForModel 按客户端模型名找到别名。
+func aliasForModel(requested string) *modelAlias {
+	name, _ := stripModelPrefix(normalizeModelName(requested))
+	for i := range capabilityAliases {
+		if strings.EqualFold(name, capabilityAliases[i].ID) {
+			return &capabilityAliases[i]
+		}
+	}
+	return nil
 }
 
 // Upstream skill identifiers, from the client's ChatAbilityType enum

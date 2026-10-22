@@ -188,13 +188,14 @@ var guideCapabilities = []guideCapability{
   "messages": [{"role":"user","content":"证明根号 2 是无理数"}]
 }`,
 	},
+
+	// ---- 图片 ----
 	{
-		Model: "image", Name: "图像生成", Kind: "图片",
-		Summary: "在图片端点出图，返回无水印原图直链；同样支持 /v1/chat/completions 的多模态返回。",
+		Model: "image", Name: "图像生成（默认）", Kind: "图片",
+		Summary: "用账号默认的出图模型，等价于网页端直接出图。",
 		Params: []string{
-			"prompt：必填，作为出图提示词",
-			"n：可选，每次只生成一张",
-			"不支持 size / quality / style：上游不接受这些参数",
+			"prompt：必填",
+			"具体模型见下面几个 Seedream 别名",
 		},
 		Endpoint: "/v1/images/generations",
 		Example: `{
@@ -203,18 +204,97 @@ var guideCapabilities = []guideCapability{
 }`,
 	},
 	{
-		Model: "video", Name: "视频生成", Kind: "视频",
-		Summary: "在视频端点出片，返回已完成的 job 与视频直链；上游同步生成，所以 status 直接是 completed。",
-		Params: []string{
-			"prompt：必填，作为视频提示词",
-			"seconds：可选，仅回显；实际时长由上游决定",
-			"size / aspect_ratio：可选，上游不接受，忽略",
-		},
+		Model: "seedream-5.0-pro", Name: "Seedream 5.0 Pro", Kind: "图片",
+		Summary:  "专业出图，4 倍消耗。需要豆包订阅，额度不足时上游会拒绝。",
+		Params:   []string{"prompt：必填", "model_item_key：seedream_5.0_pro"},
+		Endpoint: "/v1/images/generations",
+		Example: `{
+  "model": "doubao/seedream-5.0-pro",
+  "prompt": "赛博朋克风格的城市夜景，宽幅"
+}`,
+	},
+	{
+		Model: "seedream-5.0-flash", Name: "Seedream 5.0 Flash", Kind: "图片",
+		Summary:  "专业快速，速度快于 Pro，消耗更低。",
+		Params:   []string{"prompt：必填", "model_item_key：seedream_5.0"},
+		Endpoint: "/v1/images/generations",
+		Example: `{
+  "model": "doubao/seedream-5.0-flash",
+  "prompt": "一张产品海报，简洁留白"
+}`,
+	},
+	{
+		Model: "seedream-4.5", Name: "Seedream 4.5", Kind: "图片",
+		Summary:  "日常生成，网页端默认选中的就是它。",
+		Params:   []string{"prompt：必填", "model_item_key：seedream_4.5"},
+		Endpoint: "/v1/images/generations",
+		Example: `{
+  "model": "doubao/seedream-4.5",
+  "prompt": "一只橘猫"
+}`,
+	},
+	{
+		Model: "seedream-4.0", Name: "Seedream 4.0", Kind: "图片",
+		Summary:  "基础生图，兼容性最好。",
+		Params:   []string{"prompt：必填", "model_item_key：seedream_4.0"},
+		Endpoint: "/v1/images/generations",
+		Example: `{
+  "model": "doubao/seedream-4.0",
+  "prompt": "一只橘猫"
+}`,
+	},
+
+	// ---- 视频 ----
+	{
+		Model: "video", Name: "视频生成（默认）", Kind: "视频",
+		Summary:  "用账号默认的视频模型。",
+		Params:   []string{"prompt：必填", "具体模型见下面几个 Seedance 别名"},
 		Endpoint: "/v1/videos",
 		Example: `{
   "model": "doubao/video",
-  "prompt": "海浪拍打礁石，慢镜头",
+  "prompt": "海浪拍打礁石，慢镜头"
+}`,
+	},
+	{
+		Model: "seedance-2.5", Name: "Seedance 2.5", Kind: "视频",
+		Summary:  "旗舰视频标杆，5 倍消耗。人像生成需先完成分身认证。",
+		Params:   []string{"prompt：必填", "seconds：可选，仅回显", "model_item_key：seedance_2.5"},
+		Endpoint: "/v1/videos",
+		Example: `{
+  "model": "doubao/seedance-2.5",
+  "prompt": "火球从掌心升起，慢镜头",
   "seconds": 6
+}`,
+	},
+	{
+		Model: "seedance-2.0", Name: "Seedance 2.0", Kind: "视频",
+		Summary:  "进阶画面表现，2 倍消耗。人像生成需先完成分身认证。",
+		Params:   []string{"prompt：必填", "model_item_key：seedance_2.0"},
+		Endpoint: "/v1/videos",
+		Example: `{
+  "model": "doubao/seedance-2.0",
+  "prompt": "海边日落延时",
+  "seconds": 5
+}`,
+	},
+	{
+		Model: "seedance-2.0-fast", Name: "Seedance 2.0 Fast", Kind: "视频",
+		Summary:  "快速出片选择，等待时间短。",
+		Params:   []string{"prompt：必填", "model_item_key：seedance_2.0_fast"},
+		Endpoint: "/v1/videos",
+		Example: `{
+  "model": "doubao/seedance-2.0-fast",
+  "prompt": "一杯咖啡冒热气"
+}`,
+	},
+	{
+		Model: "seedance-2.0-mini", Name: "Seedance 2.0 Mini", Kind: "视频",
+		Summary:  "日常生成使用，消耗最低。",
+		Params:   []string{"prompt：必填", "model_item_key：seedance_2.0_mini"},
+		Endpoint: "/v1/videos",
+		Example: `{
+  "model": "doubao/seedance-2.0-mini",
+  "prompt": "窗外的雨"
 }`,
 	},
 }
