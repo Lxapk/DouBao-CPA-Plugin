@@ -89,6 +89,7 @@ func renderLoginPage(state string) string {
 		"验证码由所选上游下发，插件只负责提交，不会保存你的短信内容。",
 		"登录成功后插件拿到的是与网页端相同的会话，不会多出额外权限。",
 		"国内版与国际版的账号互不通用：给 Dola 加账号就选 Dola，别用豆包的手机号试。",
+		"如果提示「请求太频繁 / Maximum number of attempts」，那是上游按 IP 计数的防刷限制，等 10–30 分钟再点获取验证码，期间别反复试。",
 		"会话到期后需要重新登录；同一账号重复登录会覆盖旧记录，不会产生重复账号。",
 	} {
 		b.WriteString(`<div class="note" style="margin:5px 0;line-height:1.7">· ` + line + `</div>`)

@@ -161,17 +161,41 @@ func passportError(payload []byte) *phoneLoginError {
 
 	lower := strings.ToLower(text)
 	err := &phoneLoginError{Code: fmt.Sprint(out.Data.ErrorCode), Message: text}
-	switch {
-	case strings.Contains(text, "频繁"):
-		err.Hint = "发送太频繁，等一分钟再试"
-	case strings.Contains(text, "次数过多") || strings.Contains(text, "过期"):
-		err.Hint = "验证码已失效，重新获取一次"
-	case strings.Contains(text, "验证码"):
+
+	// 错误码优先：文案随语言变化（同一个 7 在中文是「访问太频繁」、
+	// 英文是 "Maximum number of attempts reached"、日文又是另一句），
+	// 只按文案匹配会让非中文上游漏掉归类。
+	switch out.Data.ErrorCode {
+	case 7:
+		err.Hint = "请求太频繁被上游拦住了，等 10–30 分钟再试；这段时间别反复点「获取验证码」"
+	case 1204:
+		err.Hint = "上游拒绝了这个号码：号码本身不可用，或该号码今天已被请求过多次"
+	case 1003:
+		err.Hint = "手机号格式不对，需要 11 位国内号码"
+	case 1202:
 		err.Hint = "验证码不对，请核对后重试"
-	case strings.Contains(text, "手机号"):
-		err.Hint = "手机号需要是 11 位国内号码"
-	case strings.Contains(lower, "risk") || strings.Contains(text, "风控"):
-		err.Hint = "该号码触发了风控，需要先在官方客户端登录一次"
+	case 1203, 1205:
+		err.Hint = "验证码已失效，重新获取一次"
+	case 1206:
+		err.Hint = "发送太频繁，等一分钟再试"
+	case 16:
+		err.Hint = "该应用无权限：这是 App 侧接口，网页端登录要用 /passport/web/ 那一套"
+	}
+
+	if err.Hint == "" {
+		switch {
+		case strings.Contains(text, "频繁") || strings.Contains(lower, "frequent") ||
+			strings.Contains(lower, "attempts"):
+			err.Hint = "发送太频繁，等一会儿再试"
+		case strings.Contains(text, "次数过多") || strings.Contains(text, "过期"):
+			err.Hint = "验证码已失效，重新获取一次"
+		case strings.Contains(text, "验证码"):
+			err.Hint = "验证码不对，请核对后重试"
+		case strings.Contains(text, "手机号") || strings.Contains(lower, "mobile"):
+			err.Hint = "手机号格式不对，需要 11 位国内号码"
+		case strings.Contains(lower, "risk") || strings.Contains(text, "风控"):
+			err.Hint = "该号码触发了风控，需要先在官方客户端登录一次"
+		}
 	}
 	return err
 }
