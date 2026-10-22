@@ -115,7 +115,18 @@ func (c *credentials) sanitizedCookies() string {
 	}
 	out := strings.TrimSpace(b.String())
 	// Re-join the pairs so a value that wrapped mid-cookie still parses.
-	return normalizeCookieSeparators(out)
+	out = normalizeCookieSeparators(out)
+
+	// flow_cur_user_sec_id 是 IM 接口识别账号的键，但网页前端是把它当普通
+	// 存储写入的，短信登录的 Set-Cookie 里没有。既然已经知道账号 handle，
+	// 就在这里补上，否则每个请求都会被判定为会话无效。
+	if c.SecUserID != "" && !strings.Contains(out, "flow_cur_user_sec_id=") {
+		if out != "" && !strings.HasSuffix(out, ";") {
+			out += "; "
+		}
+		out += "flow_cur_user_sec_id=" + c.SecUserID
+	}
+	return out
 }
 
 // normalizeCookieSeparators rewrites separators into the canonical "; " form.
@@ -149,7 +160,10 @@ func (c *credentials) validate() error {
 	if _, ok := realmProfiles[c.Realm]; !ok {
 		return fmt.Errorf("未知上游 %q", c.Realm)
 	}
-	if c.cookie("flow_cur_user_sec_id") == "" {
+	// flow_cur_user_sec_id 由网页前端写入，不是服务端 Set-Cookie，所以短信登录
+	// 拿到的 Cookie 里通常没有它。此时只要知道账号 handle（SecUserID），
+	// sanitizedCookies 会把它补进请求头，不必在这里拒绝。
+	if c.cookie("flow_cur_user_sec_id") == "" && strings.TrimSpace(c.SecUserID) == "" {
 		return errors.New("Cookie 缺少 flow_cur_user_sec_id，请确认复制的是登录后的完整 Cookie")
 	}
 	if !hasAnyCookie(c, "sessionid", "sessionid_ss", "sid_tt") {

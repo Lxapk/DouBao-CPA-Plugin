@@ -430,12 +430,17 @@ func completePhoneLogin(req pluginapi.AuthLoginPollRequest, r realm, phone strin
 	creds := &credentials{Realm: r, Cookies: cookies}
 	creds = creds.withDefaults()
 
-	// 登录成功后立刻确认这串 Cookie 真能调用上游，顺便拿到账号标识和昵称。
-	if probe, errProbe := probeCredential(creds); errProbe == nil {
-		creds.applyLaunch(probe)
-	} else {
-		logInfo("doubao: 短信登录成功，但探测账号失败：" + errProbe.Error())
+	// 必须探测成功才算登录完成：账号 handle 要靠 launch 换回来，
+	// 探测失败说明这串 Cookie 调不动 IM 接口。
+	probe, errProbe := probeCredential(creds)
+	if errProbe != nil {
+		logError("doubao: 短信登录后探测账号失败：" + errProbe.Error())
+		return okEnvelope(pluginapi.AuthLoginPollResponse{
+			Status:  pluginapi.AuthLoginStatusError,
+			Message: "登录已通过，但账号信息获取失败：" + errProbe.Error(),
+		})
 	}
+	creds.applyLaunch(probe)
 	if creds.Nickname == "" {
 		creds.Nickname = maskPhone(phone)
 	}

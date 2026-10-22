@@ -79,14 +79,21 @@ func TestMaskPhone(t *testing.T) {
 
 // 上游报错要能被识别；成功响应（没有 message）不能被当成错误。
 func TestPassportError(t *testing.T) {
-	if err := passportError([]byte(`{"message":"","data":{}}`)); err != nil {
-		t.Errorf("空 message 不应报错: %v", err)
+	// 成功：error_code 为 0，message 是 "success"。这条曾经被判成失败。
+	if err := passportError([]byte(`{"data":{"error_code":0},"message":"success"}`)); err != nil {
+		t.Errorf("message=success 应视为成功: %v", err)
 	}
+	if err := passportError([]byte(`{"data":{"error_code":0},"message":""}`)); err != nil {
+		t.Errorf("空响应应视为成功: %v", err)
+	}
+
+	// 失败：网关一律带非零 error_code。
 	cases := []struct{ body, hint string }{
-		{`{"message":"操作太频繁"}`, "等一分钟"},
-		{`{"message":"验证码错误，请重新输入"}`, "重新获取"},
-		{`{"message":"手机号错误，请重新填写"}`, "11 位"},
-		{`{"message":"risk control"}`, "风控"},
+		{`{"data":{"error_code":1206,"description":"验证码发送太频繁，请稍后再试"},"message":"error"}`, "等一分钟"},
+		{`{"data":{"error_code":1203,"description":"错误次数过多或验证码过期，请稍后重试"},"message":"error"}`, "重新获取"},
+		{`{"data":{"error_code":1202,"description":"验证码错误，请重新输入"},"message":"error"}`, "核对"},
+		{`{"data":{"error_code":1003,"description":"手机号错误，请重新填写"},"message":"error"}`, "11 位"},
+		{`{"data":{"error_code":16,"description":"该应用无权限"},"message":"error"}`, ""},
 	}
 	for _, c := range cases {
 		err := passportError([]byte(c.body))
@@ -94,7 +101,7 @@ func TestPassportError(t *testing.T) {
 			t.Errorf("%s 应被识别为错误", c.body)
 			continue
 		}
-		if !strings.Contains(err.Error(), c.hint) {
+		if c.hint != "" && !strings.Contains(err.Error(), c.hint) {
 			t.Errorf("%s 的提示 = %q, 期望包含 %q", c.body, err.Error(), c.hint)
 		}
 	}
@@ -242,5 +249,53 @@ func TestLoginFormHasNoType(t *testing.T) {
 		if !strings.Contains(loginPart, want) && want != `"is6Digits"` {
 			t.Errorf("登录请求缺少 %s", want)
 		}
+	}
+}
+
+// 短信登录拿到的 Cookie 没有 flow_cur_user_sec_id（那是网页前端写的），
+// 发请求必须由插件补上，否则 IM 接口一律判定会话无效。
+func TestSecUserIDIsInjectedIntoCookie(t *testing.T) {
+	creds := &credentials{
+		Realm:     realmDoubao,
+		Cookies:   "sessionid=abc; sid_tt=def",
+		SecUserID: "1234567890",
+	}
+	got := creds.sanitizedCookies()
+	if !strings.Contains(got, "flow_cur_user_sec_id=1234567890") {
+		t.Errorf("未补 flow_cur_user_sec_id: %q", got)
+	}
+	// 不能破坏原有 Cookie。
+	if !strings.Contains(got, "sessionid=abc") || !strings.Contains(got, "sid_tt=def") {
+		t.Errorf("原有 Cookie 被破坏: %q", got)
+	}
+
+	// 已经带了就不要重复追加。
+	withField := &credentials{
+		Realm:     realmDoubao,
+		Cookies:   "sessionid=abc; flow_cur_user_sec_id=999",
+		SecUserID: "1234567890",
+	}
+	out := withField.sanitizedCookies()
+	if strings.Count(out, "flow_cur_user_sec_id=") != 1 {
+		t.Errorf("重复追加: %q", out)
+	}
+}
+
+// 有账号 handle 但没有 flow_cur_user_sec_id 的凭据应被接受：
+// 短信登录就是这个形态，字段由插件在发请求时补。
+func TestValidateAcceptsSecUserIDWithoutFlowCookie(t *testing.T) {
+	creds := &credentials{
+		Realm:     realmDoubao,
+		Cookies:   "sessionid=abc",
+		SecUserID: "1234567890",
+	}
+	if err := creds.validate(); err != nil {
+		t.Errorf("应被接受: %v", err)
+	}
+
+	// 两个都没有才拒绝。
+	bare := &credentials{Realm: realmDoubao, Cookies: "sessionid=abc"}
+	if err := bare.validate(); err == nil {
+		t.Error("缺少账号标识时应拒绝")
 	}
 }

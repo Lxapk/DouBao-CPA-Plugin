@@ -132,29 +132,41 @@ func passportError(payload []byte) *phoneLoginError {
 		Message string `json:"message"`
 		Data    struct {
 			Description string `json:"description"`
+			ErrorCode   int    `json:"error_code"`
 		} `json:"data"`
 	}
 	_ = json.Unmarshal(payload, &out)
 
-	msg := strings.TrimSpace(out.Message)
-	if msg == "" {
-		msg = strings.TrimSpace(out.Data.Description)
-	}
-	if msg == "" {
+	// 成败只看 error_code。
+	//
+	// 网关的错误响应一律带非零 error_code（1202 验证码错、1203 过期、1206
+	// 太频繁、16 无权限）。成功响应则是 error_code 为 0、message 写着
+	// "success"——早先按「message 非空即失败」判，会把成功判成失败，页面上
+	// 显示的就是那句「登录失败：success」。
+	if out.Data.ErrorCode == 0 {
 		return nil
 	}
 
-	// 成功的响应不会带 message，所以走到这里一定是失败。
-	lower := strings.ToLower(msg)
-	err := &phoneLoginError{Message: msg}
+	text := strings.TrimSpace(out.Data.Description)
+	if text == "" {
+		text = strings.TrimSpace(out.Message)
+	}
+	if text == "" {
+		text = fmt.Sprintf("上游返回错误码 %d", out.Data.ErrorCode)
+	}
+
+	lower := strings.ToLower(text)
+	err := &phoneLoginError{Code: fmt.Sprint(out.Data.ErrorCode), Message: text}
 	switch {
-	case strings.Contains(msg, "频繁") || strings.Contains(lower, "too many"):
+	case strings.Contains(text, "频繁"):
 		err.Hint = "发送太频繁，等一分钟再试"
-	case strings.Contains(msg, "验证码") || strings.Contains(lower, "code"):
-		err.Hint = "验证码不对或已过期，重新获取一次"
-	case strings.Contains(msg, "手机号") || strings.Contains(lower, "mobile"):
+	case strings.Contains(text, "次数过多") || strings.Contains(text, "过期"):
+		err.Hint = "验证码已失效，重新获取一次"
+	case strings.Contains(text, "验证码"):
+		err.Hint = "验证码不对，请核对后重试"
+	case strings.Contains(text, "手机号"):
 		err.Hint = "手机号需要是 11 位国内号码"
-	case strings.Contains(lower, "risk") || strings.Contains(msg, "风控"):
+	case strings.Contains(lower, "risk") || strings.Contains(text, "风控"):
 		err.Hint = "该号码触发了风控，需要先在官方客户端登录一次"
 	}
 	return err
@@ -212,8 +224,8 @@ func loginWithCode(ctx context.Context, r realm, phone string, code string) (str
 	}
 
 	cookies := cookiesFromResponse(resp)
-	if !hasLoginCookie(cookies) {
-		return "", errors.New("登录接口没有下发 sessionid：号码或验证码可能不对，也可能是上游改了接口")
+	if strings.TrimSpace(cookies) == "" {
+		return "", errors.New("登录接口没有下发任何 Cookie：号码或验证码可能不对，也可能是上游改了接口")
 	}
 	return cookies, nil
 }
@@ -235,9 +247,11 @@ func cookiesFromResponse(resp *http.Response) string {
 	return normalizeCookieSeparators(strings.Join(parts, "; "))
 }
 
-// hasLoginCookie 判断这串 Cookie 够不够用。
+// hasLoginCookie 判断这串 Cookie 是否已经包含登录态。
 //
-// 与凭据校验用的是同一组必要条件：sessionid 说明登录成立。
+// 只作为提示用：网页账号中心有时把会话拆成多步下发（先 csrf，再在
+// web_login_success 里补齐 sessionid），所以「没有 sessionid」不代表登录失败，
+// 最终是否可用由 probeCredential 实际打一次上游来决定。
 func hasLoginCookie(cookies string) bool {
 	jar := (&credentials{Cookies: cookies}).cookieMap()
 	return jar["sessionid"] != "" || jar["sessionid_ss"] != "" || jar["sid_tt"] != ""

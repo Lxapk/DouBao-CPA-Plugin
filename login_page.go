@@ -293,11 +293,18 @@ func handleLoginVerify(body []byte) pluginapi.ManagementResponse {
 	}
 
 	creds := (&credentials{Realm: r, Cookies: cookies}).withDefaults()
-	if probe, errProbe := probeCredential(creds); errProbe == nil {
-		creds.applyLaunch(probe)
-	} else {
-		logInfo("doubao: 短信登录成功，但探测账号失败：" + errProbe.Error())
+
+	// 必须探测成功才算登录完成。短信登录只拿到 sessionid，账号 handle
+	// （flow_cur_user_sec_id）要靠 /alice/user/launch 换回来；探测失败意味着
+	// 这串 Cookie 调不动 IM 接口，落库只会得到一个永远失败的账号。
+	probe, errProbe := probeCredential(creds)
+	if errProbe != nil {
+		logError("doubao: 短信登录后探测账号失败：" + errProbe.Error())
+		return errorJSON(http.StatusBadGateway,
+			"登录已通过，但账号信息获取失败："+errProbe.Error()+
+				"。请重试一次；若持续失败，说明该账号被风控，需要先在官方客户端登录一次。")
 	}
+	creds.applyLaunch(probe)
 	if creds.Nickname == "" {
 		creds.Nickname = maskPhone(phone)
 	}
