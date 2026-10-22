@@ -29,7 +29,6 @@ import (
 // panelState is the persisted overlay. Absent keys mean "not changed here".
 type panelState struct {
 	RealmDefault          string `json:"realm_default,omitempty"`
-	ExposeModels          *bool  `json:"expose_models,omitempty"`
 	RequestTimeoutSeconds int    `json:"request_timeout_seconds,omitempty"`
 	ReplyPollSeconds      int    `json:"reply_poll_seconds,omitempty"`
 	MediaPollSeconds      int    `json:"media_poll_seconds,omitempty"`
@@ -82,9 +81,6 @@ func overlayPanelState(s *pluginSettings) {
 	if r := normalizeRealm(p.RealmDefault); r != "" {
 		s.RealmDefault = r
 	}
-	if p.ExposeModels != nil {
-		s.ExposeModels = p.ExposeModels
-	}
 	if p.Debug != nil {
 		s.Debug = *p.Debug
 	}
@@ -119,11 +115,6 @@ func mergePanelState(patch map[string]json.RawMessage) error {
 			var v string
 			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal == nil {
 				current.RealmDefault = v
-			}
-		case "expose_models":
-			var v bool
-			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal == nil {
-				current.ExposeModels = boolPtr(v)
 			}
 		case "debug":
 			var v bool

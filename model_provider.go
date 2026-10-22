@@ -308,6 +308,36 @@ type catalogModel struct {
 	Description string `json:"description,omitempty"`
 }
 
+// realmsWithAccounts 返回真正有已授权账号的上游。
+//
+// 模型列表跟着账号走：有 Dola 账号就列出 Dola 的模型，没有就不列。
+// 以前这是个手动开关，问题在于它和实际情况脱节 —— 关掉之后即使授权了
+// Dola 账号，那侧模型也不出现；开着时又会列出根本调不通的上游。
+//
+// 还没有任何账号时（首次安装、授权之前）列出全部，否则用户在选择模型时
+// 看不到任何东西，会以为插件坏了。
+func realmsWithAccounts() []realm {
+	entries := accounts.get()
+	seen := map[realm]bool{}
+	var out []realm
+	for _, r := range allRealms {
+		for _, e := range entries {
+			if e.Realm == r {
+				seen[r] = true
+				break
+			}
+		}
+		if seen[r] {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		// 没有账号：两侧都列出，让用户先看到能力再决定登录哪一侧。
+		return allRealms
+	}
+	return out
+}
+
 // catalogueFor builds the model list for one realm.
 func catalogueFor(r realm) []catalogModel {
 	profile := profileFor(r)
@@ -401,11 +431,7 @@ func realmFromStorageBlob(raw []byte) string {
 
 // buildCatalogue assembles the advertised models.
 func buildCatalogue() []catalogModel {
-	settings := state.settings.get()
-	realms := allRealms
-	if !settings.exposesModels() {
-		realms = []realm{settings.RealmDefault}
-	}
+	realms := realmsWithAccounts()
 	var out []catalogModel
 	for _, r := range realms {
 		out = append(out, catalogueFor(r)...)

@@ -40,10 +40,28 @@ func renderLoginPage(state string) string {
 	b.WriteString(`<span class="grow"></span><span class="note" id="loginMsg"></span></header>`)
 	b.WriteString(`<div class="pad">`)
 
-	b.WriteString(`<div class="row" style="margin-bottom:12px">`)
-	b.WriteString(`<span class="note">站点：` + realmLabel(r) + `</span>`)
-	b.WriteString(`<span class="note">` + htmlEscape(profile.Host) + `</span>`)
+	// 登录前先选国际版还是国内版。
+	//
+	// 这两个上游的账号互不通用，选错会得到「区域不可用」；而用户打开登录页时
+	// 常常还没想好要加哪一侧，所以开关放在页面里，而不是只能靠面板里预设。
+	b.WriteString(`<div class="note" style="margin-bottom:7px">登录到哪个上游</div>`)
+	b.WriteString(`<div class="seg" id="loginRealmSeg">`)
+	for _, each := range allRealms {
+		cls := ""
+		if each == r {
+			cls = "on"
+		}
+		item := profileFor(each)
+		b.WriteString(`<button type="button" class="` + cls + `"` +
+			` data-value="` + string(each) + `"` +
+			` data-call="pickLoginRealm" data-arg0="` + string(each) + `"` +
+			` title="` + htmlEscape(item.Host) + `">` + realmLabel(each) + `</button>`)
+	}
 	b.WriteString(`</div>`)
+	b.WriteString(`<div class="note" id="loginSite" style="margin:8px 0 14px">` +
+		htmlEscape(profile.Host) + `</div>`)
+	b.WriteString(`<div class="note" style="margin:-8px 0 14px">` +
+		`两侧账号互不通用：豆包账号不能用于 Dola，反之亦然。</div>`)
 
 	b.WriteString(`<div class="note" style="margin-bottom:6px">手机号</div>`)
 	b.WriteString(`<div class="row">`)
@@ -68,8 +86,9 @@ func renderLoginPage(state string) string {
 
 	b.WriteString(`<div class="group-head" style="margin:20px 0 8px"><h2>说明</h2></div>`)
 	for _, line := range []string{
-		"验证码由豆包下发，插件只负责提交，不会保存你的短信内容。",
+		"验证码由所选上游下发，插件只负责提交，不会保存你的短信内容。",
 		"登录成功后插件拿到的是与网页端相同的会话，不会多出额外权限。",
+		"国内版与国际版的账号互不通用：给 Dola 加账号就选 Dola，别用豆包的手机号试。",
 		"会话到期后需要重新登录；同一账号重复登录会覆盖旧记录，不会产生重复账号。",
 	} {
 		b.WriteString(`<div class="note" style="margin:5px 0;line-height:1.7">· ` + line + `</div>`)
@@ -92,6 +111,7 @@ func loginPageScript(state string) string {
 (function () {
   "use strict";
   var STATE = ` + string(stateJSON) + `;
+  var SITE_MAP = ` + siteMapJSON() + `;
 
   // Submissions go to the management routes, not the resource route the page
   // itself was served from: CPA's resource handler only accepts GET (anything
@@ -149,6 +169,37 @@ func loginPageScript(state string) string {
     });
   }
 
+  // 当前选中的上游。提交时随请求带上，服务端据此选账号中心与 aid ——
+  // 这两个值两侧不同，只靠 URL 上的 realm 会让切换按钮形同虚设。
+  var REALM = STATE.split("-")[0] || "doubao";
+
+  function currentRealm() {
+    return REALM;
+  }
+
+  var SITES = SITE_MAP;
+
+  function pickLoginRealm(value) {
+    if (!value) return;
+    REALM = value;
+    var seg = document.getElementById("loginRealmSeg");
+    if (seg) {
+      var btns = seg.querySelectorAll("button");
+      for (var i = 0; i < btns.length; i++) {
+        var on = btns[i].getAttribute("data-value") === value;
+        btns[i].className = on ? "on" : "";
+      }
+    }
+    var site = document.getElementById("loginSite");
+    if (site && SITES[value]) site.textContent = SITES[value];
+    // 换了上游，之前发的验证码就不作数了，清掉避免误用。
+    var code = document.getElementById("code");
+    if (code) code.value = "";
+    note("");
+    result("");
+    showAfterLogin(false);
+  }
+
   function phoneValue() {
     var el = document.getElementById("phone");
     return ((el && el.value) || "").replace(/[\s-]/g, "");
@@ -165,7 +216,7 @@ func loginPageScript(state string) string {
     var btn = document.getElementById("sendBtn");
     if (btn) { btn.disabled = true; btn.textContent = "发送中…"; }
     note("正在发送…");
-    post("/login/send", { state: STATE, phone: p }).then(function (data) {
+    post("/login/send", { state: STATE, phone: p, realm: currentRealm() }).then(function (data) {
       if (data && data.ok) {
         note("验证码已发送", "ok");
         var input = document.getElementById("code");
@@ -187,7 +238,7 @@ func loginPageScript(state string) string {
     var btn = document.getElementById("loginBtn");
     if (btn) { btn.disabled = true; btn.textContent = "登录中…"; }
     note("正在登录…");
-    post("/login/verify", { state: STATE, phone: p, code: c }).then(function (data) {
+    post("/login/verify", { state: STATE, phone: p, code: c, realm: currentRealm() }).then(function (data) {
       if (data && data.ok) {
         note("登录成功", "ok");
         var lines = ["<div><b>登录成功</b></div>"];
@@ -279,6 +330,7 @@ func loginPageScript(state string) string {
       var action = el.dataset ? el.dataset.call : null;
       if (action === "sendCode") { ev.preventDefault(); sendCode(); return; }
       if (action === "submitLogin") { ev.preventDefault(); submitLogin(); return; }
+      if (action === "pickLoginRealm") { ev.preventDefault(); pickLoginRealm(el.dataset.arg0); return; }
       if (action === "backToPanel") { ev.preventDefault(); backToPanel(); return; }
       if (action === "loginAgain") { ev.preventDefault(); loginAgain(); return; }
       el = el.parentNode;
@@ -299,6 +351,19 @@ type loginFormRequest struct {
 	State string `json:"state"`
 	Phone string `json:"phone"`
 	Code  string `json:"code"`
+	// Realm 是页面上选中的上游。它决定用哪个账号中心与 aid ——
+	// 这两个值两侧不同，只靠 state 会让切换按钮不起作用。
+	Realm string `json:"realm"`
+}
+
+// realmForLoginForm 按请求里选中的上游决定登录去哪一侧。
+//
+// 优先用页面选的值，其次看登录会话绑定的那一侧，最后退回默认上游。
+func realmForLoginForm(req loginFormRequest) realm {
+	if r := normalizeRealm(req.Realm); r != "" {
+		return r
+	}
+	return realmForLoginState(req.State)
 }
 
 // handleLoginSendCode 发送验证码。
@@ -315,7 +380,7 @@ func handleLoginSendCode(body []byte) pluginapi.ManagementResponse {
 		return errorJSON(http.StatusBadRequest, "请填写 11 位手机号")
 	}
 
-	r := realmForLoginState(req.State)
+	r := realmForLoginForm(req)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if errSend := sendLoginCode(ctx, r, phone); errSend != nil {
@@ -343,7 +408,7 @@ func handleLoginVerify(body []byte) pluginapi.ManagementResponse {
 		return errorJSON(http.StatusBadRequest, "请填写短信验证码")
 	}
 
-	r := realmForLoginState(req.State)
+	r := realmForLoginForm(req)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -411,11 +476,33 @@ func normalizePhone(raw string) string {
 
 // realmForLoginState 把登录会话绑定的上游取出来，缺省用默认上游。
 func realmForLoginState(stateValue string) realm {
-	if pending := pendingLogins.peek(strings.TrimSpace(stateValue)); pending != nil && pending.Realm != "" {
+	stateValue = strings.TrimSpace(stateValue)
+	if pending := pendingLogins.peek(stateValue); pending != nil && pending.Realm != "" {
 		return pending.Realm
+	}
+	// state 的形状是 "<realm>-<uuid>"（startPanelLogin 生成的）。会话已经过期
+	// 或不在内存里时（重启过），前缀仍能说明这一页是为哪一侧打开的，
+	// 否则登录页会把 Dola 的页面显示成豆包，用户看到站点不对还以为点错了。
+	if idx := strings.IndexByte(stateValue, '-'); idx > 0 {
+		if r := normalizeRealm(stateValue[:idx]); r != "" {
+			return r
+		}
 	}
 	if r := state.settings.get().RealmDefault; r != "" {
 		return r
 	}
 	return realmDoubao
+}
+
+// siteMapJSON 把每个上游的站点地址交给页面，切换时用来更新提示。
+func siteMapJSON() string {
+	out := map[string]string{}
+	for _, r := range allRealms {
+		out[string(r)] = profileFor(r).Host
+	}
+	raw, errMarshal := json.Marshal(out)
+	if errMarshal != nil {
+		return "{}"
+	}
+	return string(raw)
 }

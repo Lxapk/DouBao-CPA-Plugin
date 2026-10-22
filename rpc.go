@@ -29,7 +29,7 @@ const (
 	// as 0.1.0 and the panel showed a version that did not exist. The release
 	// script now rewrites this line before building, and a test pins it to
 	// registry.json so a mismatch fails the suite rather than shipping.
-	pluginVersion = "0.3.7"
+	pluginVersion = "0.3.8"
 
 	pluginAuthor = "Lxapk"
 	pluginRepo   = "https://github.com/Lxapk/doubao-cpa-plugin"
@@ -176,11 +176,6 @@ func buildRegistration() registration {
 					Type:        pluginapi.ConfigFieldTypeEnum,
 					EnumValues:  []string{"doubao", "dola"},
 					Description: "默认上游：doubao=国内版豆包（www.doubao.com），dola=国际版 Dola（www.dola.com）。未在凭据中指定时使用。",
-				},
-				{
-					Name:        "expose_models",
-					Type:        pluginapi.ConfigFieldTypeBoolean,
-					Description: "是否在 /v1/models 中同时暴露豆包与 Dola 的模型。关闭时只暴露 default_realm 的模型。",
 				},
 				{
 					Name:        "request_timeout_seconds",

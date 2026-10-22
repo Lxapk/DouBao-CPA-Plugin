@@ -423,7 +423,6 @@ func jsonResponse(v any) pluginapi.ManagementResponse {
 func settingsJSON(s pluginSettings) map[string]any {
 	return map[string]any{
 		"realm_default":           string(s.RealmDefault),
-		"expose_models":           s.exposesModels(),
 		"request_timeout_seconds": s.RequestTimeoutSeconds,
 		"reply_poll_seconds":      s.ReplyPollSeconds,
 		"media_poll_seconds":      s.MediaPollSeconds,
@@ -484,13 +483,6 @@ func applySettingsPatch(s *pluginSettings, patch map[string]json.RawMessage) err
 				return errUnknownRealm(v)
 			}
 			s.RealmDefault = r
-
-		case "expose_models":
-			var v bool
-			if errUnmarshal := json.Unmarshal(raw, &v); errUnmarshal != nil {
-				return errField("expose_models")
-			}
-			s.ExposeModels = boolPtr(v)
 
 		case "debug":
 			var v bool

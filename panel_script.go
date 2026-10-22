@@ -62,6 +62,8 @@ func panelScript() string {
   var OUR_KEY = "doubao.mgmtKey";
   var VIEW_KEY = "doubao-panel-view";
   var AUTH_REALM_KEY = "doubao-auth-realm";
+  // 默认上游，来自 /settings；登录页初值用它。
+  var stateDefaultRealm = "doubao";
   var API = "/v0/management";
   // The login form is a resource route: it must be reachable without the
   // management key, because the operator has not necessarily saved one yet.
@@ -222,8 +224,8 @@ func panelScript() string {
   // updates the whole page rather than just the control that was touched.
   function applySettings(s) {
     if (!s) return;
+    if (s.realm_default) stateDefaultRealm = s.realm_default;
     segSelect("realmSeg", s.realm_default || "doubao");
-    segSelect("exposeSeg", s.expose_models ? "on" : "off");
     segSelect("debugSeg", s.debug ? "on" : "off");
     segSelect("strategySeg", s.routing || "round_robin");
     var map = {
@@ -368,9 +370,9 @@ func panelScript() string {
     },
 
     openLogin: function () {
-      // 账号页只有这一个添加入口：直接开登录页。上游跟着设置里的默认上游走，
-      // 登录页自己会按它建会话。
-      var realm = storageGet(AUTH_REALM_KEY) || "doubao";
+      // 账号页只有这一个添加入口。登录页里有国际版 / 国内版的切换，
+      // 这里只负责给一个合理的初值：上次选过就用上次的，否则用默认上游。
+      var realm = storageGet(AUTH_REALM_KEY) || stateDefaultRealm || "doubao";
       window.open(LOGIN_PATH + "?realm=" + encodeURIComponent(realm), "_blank");
     },
 
@@ -390,11 +392,6 @@ func panelScript() string {
         var bad = parts.some(function (p) { return p.indexOf("失败") >= 0 || p.indexOf("未能") >= 0; });
         note("realmMsg", parts.length ? parts.join("；") : "已切换", bad ? "bad" : "ok");
       }).catch(function (e) { note("realmMsg", "切换失败：" + e.message, "bad"); });
-    },
-
-    setExpose: function (value) {
-      segSelect("exposeSeg", value);
-      setSetting("expose_models", value === "on", "exposeMsg");
     },
 
     pickStrategy: function (value) {

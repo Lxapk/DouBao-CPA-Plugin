@@ -22,7 +22,6 @@ func renderSettingsView() string {
 	b.WriteString(`<div class="group-head"><h2>上游</h2>` +
 		`<span class="desc">不带前缀的模型名会用哪一个上游</span></div>`)
 	b.WriteString(renderRealmBox(settings))
-	b.WriteString(renderExposeBox(settings))
 
 	// ---- account selection ----
 	b.WriteString(`<div class="group-head"><h2>路由</h2>` +
@@ -128,37 +127,6 @@ func realmEffectText(r realm) string {
 		return "当前：不带前缀的模型调用 Dola（国际版）。需要 Dola 账号；用豆包账号调用会返回区域不可用。"
 	}
 	return "当前：不带前缀的模型调用豆包（国内版）。需要豆包账号；用 Dola 账号调用会返回区域不可用。"
-}
-
-// renderExposeBox controls whether both upstreams' models are advertised.
-func renderExposeBox(settings pluginSettings) string {
-	var b strings.Builder
-	b.WriteString(`<div class="box">`)
-	b.WriteString(`<header><h3>模型可见范围</h3><span class="grow"></span>` +
-		`<span class="note" id="exposeMsg"></span></header>`)
-	b.WriteString(`<div class="pad">`)
-	b.WriteString(`<div class="seg" id="exposeSeg">`)
-	on := settings.exposesModels()
-	for _, opt := range []struct {
-		value, label string
-		state        bool
-	}{
-		{"on", "两者都列出", true},
-		{"off", "仅默认上游", false},
-	} {
-		cls := ""
-		if opt.state == on {
-			cls = "on"
-		}
-		b.WriteString(`<button type="button" class="` + cls + `"` +
-			` data-value="` + opt.value + `"` +
-			` data-call="setExpose" data-arg0="` + opt.value + `">` + opt.label + `</button>`)
-	}
-	b.WriteString(`</div>`)
-	b.WriteString(`<div class="setting-effect">关闭后 <code>/v1/models</code> 只列出默认上游的模型，` +
-		`另一个上游的账号即使已授权也不会出现在选择列表里。</div>`)
-	b.WriteString(`</div></div>`)
-	return b.String()
 }
 
 // renderRoutingBox draws the request-distribution strategy as a segmented control

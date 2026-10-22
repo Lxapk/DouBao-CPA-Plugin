@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
@@ -426,17 +427,61 @@ func TestBuildCatalogueExposesBothRealms(t *testing.T) {
 	}
 }
 
-func TestBuildCatalogueSingleRealmWhenNotExposed(t *testing.T) {
-	s := defaultSettings()
-	s.ExposeModels = boolPtr(false)
-	s.RealmDefault = realmDola
-	state.settings.when = s
-	defer func() { state.settings.when = defaultSettings() }()
+// 模型列表跟着账号走：有哪一侧的账号就列出哪一侧的模型。
+//
+// 以前是个手动开关，和实际情况脱节 —— 关掉后即使授权了 Dola 账号，
+// 那侧模型也不出现；开着时又会列出根本调不通的上游。
+func TestCatalogueFollowsAccounts(t *testing.T) {
+	accounts.mu.Lock()
+	saved := accounts.entries
+	savedAt := accounts.at
+	accounts.mu.Unlock()
+	defer func() {
+		accounts.mu.Lock()
+		accounts.entries, accounts.at = saved, savedAt
+		accounts.mu.Unlock()
+	}()
 
+	set := func(entries []hostAuthEntry) {
+		accounts.mu.Lock()
+		accounts.entries = entries
+		accounts.at = time.Now()
+		accounts.mu.Unlock()
+	}
+
+	// 只有豆包账号：只列豆包
+	set([]hostAuthEntry{{Realm: realmDoubao, SecUserID: "u1"}})
+	ids := map[string]bool{}
 	for _, m := range buildCatalogue() {
-		if strings.HasPrefix(m.ID, "doubao/") {
-			t.Errorf("doubao model leaked while expose_models is off: %s", m.ID)
+		ids[m.ID] = true
+	}
+	if !ids["doubao/default"] {
+		t.Error("有豆包账号却没列出豆包模型")
+	}
+	for id := range ids {
+		if strings.HasPrefix(id, "dola/") {
+			t.Errorf("没有 Dola 账号却列出了 %s", id)
 		}
+	}
+
+	// 两侧都有：两侧都列
+	set([]hostAuthEntry{{Realm: realmDoubao, SecUserID: "u1"}, {Realm: realmDola, SecUserID: "u2"}})
+	ids = map[string]bool{}
+	for _, m := range buildCatalogue() {
+		ids[m.ID] = true
+	}
+	if !ids["doubao/default"] || !ids["dola/default"] {
+		t.Errorf("两侧都有账号时应两侧都列出: %v", ids)
+	}
+
+	// 还没有任何账号：两侧都列，方便先看到能力
+	set(nil)
+	ids = map[string]bool{}
+	for _, m := range buildCatalogue() {
+		ids[m.ID] = true
+	}
+	if !ids["doubao/default"] || !ids["dola/default"] {
+		t.Error("没有账号时也应列出两侧，否则用户看不到任何模型")
 	}
 }
 

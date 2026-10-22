@@ -10,8 +10,6 @@ import (
 type pluginSettings struct {
 	// RealmDefault is used when a credential does not name a realm.
 	RealmDefault realm `yaml:"realm_default"`
-	// ExposeModels controls whether both realms' models appear in /v1/models.
-	ExposeModels *bool `yaml:"expose_models"`
 	// RequestTimeoutSeconds bounds one upstream call.
 	RequestTimeoutSeconds int `yaml:"request_timeout_seconds"`
 	// ReplyPollSeconds bounds how long to wait for a reply on the fallback path.
@@ -37,7 +35,6 @@ type routingSettings struct {
 func defaultSettings() pluginSettings {
 	return pluginSettings{
 		RealmDefault:          realmDoubao,
-		ExposeModels:          boolPtr(true),
 		RequestTimeoutSeconds: 90,
 		ReplyPollSeconds:      120,
 		// 视频生成通常 5–10 分钟，流还会中途断开；600 秒会让一部分生成在
@@ -50,14 +47,6 @@ func defaultSettings() pluginSettings {
 }
 
 func boolPtr(v bool) *bool { return &v }
-
-// exposesModels reports whether both realms should be advertised.
-func (s pluginSettings) exposesModels() bool {
-	if s.ExposeModels == nil {
-		return true
-	}
-	return *s.ExposeModels
-}
 
 // settingsHolder guards the live settings.
 type settingsHolder struct {
@@ -112,11 +101,6 @@ func applyScope(scope map[string]any, out *pluginSettings) {
 	if v, ok := scope["realm_default"]; ok {
 		if r := normalizeRealm(toString(v)); r != "" {
 			out.RealmDefault = r
-		}
-	}
-	if v, ok := scope["expose_models"]; ok {
-		if b, isBool := toBool(v); isBool {
-			out.ExposeModels = &b
 		}
 	}
 	if v, ok := scope["request_timeout_seconds"]; ok {

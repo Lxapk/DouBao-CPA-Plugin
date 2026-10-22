@@ -53,7 +53,7 @@ func TestPanelScriptEndpointsAreRouted(t *testing.T) {
 	for _, action := range []string{
 		"refreshAccounts", "toggleAccount", "bulkAccounts", "removeAccount",
 		"openLogin", "setRealm",
-		"setExpose", "pickStrategy", "resetRotation",
+		"pickStrategy", "resetRotation",
 		"refreshUsage", "clearCalls", "saveKey", "clearKey",
 	} {
 		if !strings.Contains(script, action+": function") {
