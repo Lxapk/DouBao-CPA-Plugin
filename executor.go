@@ -153,8 +153,11 @@ type chatRequest struct {
 	N int `json:"n"`
 	// Prompt is the image and video endpoints' input text.
 	Prompt string `json:"prompt"`
-	// Size / AspectRatio / Seconds are video request hints. The upstream decides
-	// the real values, so these are advisory and only logged.
+	// Size / AspectRatio / Seconds 是图片与视频的生成参数。
+	//
+	// 上游的生成器由 agent 规划，比例与时长最终写在 gen_params 里，而是不是由
+	// 请求直接决定 —— 所以这三个值会被翻译进提示词（见 generationHints），
+	// 由 agent 在规划时采用，而不是当作请求字段直接透传。
 	Size        string `json:"size"`
 	AspectRatio string `json:"aspect_ratio"`
 	Seconds     int    `json:"seconds"`
@@ -350,7 +353,7 @@ func executeVideoOnce(creds *credentials, chat *chatRequest) (map[string]any, er
 	videoJobs.putWithModel(job, video.URL, chat.Model)
 
 	payload := videoJobPayload(job, videoJob{URL: video.URL, Model: chat.Model, CreatedAt: time.Now()})
-	seconds := chat.Seconds
+	seconds := normalizeSeconds(chat.Seconds)
 	if seconds <= 0 {
 		seconds = 4
 	}
@@ -686,6 +689,9 @@ func executeExchangeResult(creds *credentials, chat *chatRequest, onDelta func(s
 		}
 		needCreate = true
 	}
+
+	// 比例与时长由 agent 在规划阶段决定，只能通过提示词传达。
+	prompt = withGenerationHints(prompt, mode.Kind, chat)
 
 	result, errRun := runCompletionWithImages(ctx, creds, prompt, mode, conversationID, needCreate, onDelta, images)
 	if errRun != nil {
