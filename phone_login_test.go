@@ -339,6 +339,8 @@ func TestModelCatalogue(t *testing.T) {
 }
 
 // 图片端点的 /v1/models 条目要带上 openai-image 类型，且每个具体模型都要出现。
+//
+// 目录里的模型带上游前缀（doubao/、dola/），裸名只在请求时解析，不出现在列表。
 func TestCatalogueListsEveryModel(t *testing.T) {
 	models := buildCatalogue()
 	seen := map[string]string{}
@@ -346,7 +348,8 @@ func TestCatalogueListsEveryModel(t *testing.T) {
 		seen[m.ID] = m.Type
 	}
 	for _, id := range []string{
-		"seedream-5.0-pro", "seedream-5.0-flash", "seedream-4.5", "seedream-4.0",
+		"doubao/seedream-5.0-pro", "doubao/seedream-5.0-flash",
+		"doubao/seedream-4.5", "doubao/seedream-4.0",
 	} {
 		typ, ok := seen[id]
 		if !ok {
@@ -357,7 +360,10 @@ func TestCatalogueListsEveryModel(t *testing.T) {
 			t.Errorf("%s 类型 = %q, 期望 openai-image", id, typ)
 		}
 	}
-	for _, id := range []string{"seedance-2.5", "seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"} {
+	for _, id := range []string{
+		"doubao/seedance-2.5", "doubao/seedance-2.0",
+		"doubao/seedance-2.0-fast", "doubao/seedance-2.0-mini",
+	} {
 		if _, ok := seen[id]; !ok {
 			t.Errorf("目录缺少 %s", id)
 		}
@@ -381,5 +387,72 @@ func TestCompletionRequestCarriesModelKey(t *testing.T) {
 	req = buildCompletionRequest(creds, "hi", generationMode{Kind: kindChat}, "conv", "", 0)
 	if req.Option.ModelConfig.ModelItemKey != "0" {
 		t.Errorf("默认 ModelItemKey = %q, 期望 0", req.Option.ModelConfig.ModelItemKey)
+	}
+}
+
+// 一个账号只应看到它所属上游的模型：没登录 Dola 就不该出现 dola/*。
+func TestModelForAuthIsRealmScoped(t *testing.T) {
+	state.settings.when = defaultSettings()
+	defer func() { state.settings.when = defaultSettings() }()
+
+	cases := []struct {
+		name       string
+		attributes map[string]string
+		storage    []byte
+		want       string
+		notWant    string
+	}{
+		{
+			name:       "attributes 指定豆包",
+			attributes: map[string]string{"realm": "doubao"},
+			want:       "doubao/seedream-4.5",
+			notWant:    "dola/",
+		},
+		{
+			name:       "attributes 指定 Dola",
+			attributes: map[string]string{"realm": "dola"},
+			want:       "dola/seedream-4.5",
+			notWant:    "doubao/",
+		},
+		{
+			name:    "从凭据 JSON 读 realm",
+			storage: []byte(`{"realm":"dola","cookies":"x"}`),
+			want:    "dola/seedance-2.5",
+			notWant: "doubao/",
+		},
+	}
+	for _, c := range cases {
+		// AuthModelRequest 没有 json tag，键名就是字段名本身（PascalCase）。
+		raw, _ := json.Marshal(map[string]any{
+			"Attributes":  c.attributes,
+			"StorageJSON": c.storage,
+		})
+		out, errModels := modelForAuth(raw)
+		if errModels != nil {
+			t.Fatalf("%s: %v", c.name, errModels)
+		}
+		var env struct {
+			OK     bool `json:"ok"`
+			Result struct {
+				Models []catalogModel `json:"models"`
+			} `json:"result"`
+		}
+		if errUnmarshal := json.Unmarshal(out, &env); errUnmarshal != nil {
+			t.Fatalf("%s 解析失败: %v", c.name, errUnmarshal)
+		}
+		ids := map[string]bool{}
+		for _, m := range env.Result.Models {
+			ids[m.ID] = true
+			if strings.HasPrefix(m.ID, c.notWant) {
+				t.Errorf("%s: 不应出现 %s", c.name, m.ID)
+			}
+			// 裸名不该在列表里，否则同一模型会有三个 ID。
+			if !strings.Contains(m.ID, "/") {
+				t.Errorf("%s: 目录里出现裸名 %s", c.name, m.ID)
+			}
+		}
+		if !ids[c.want] {
+			t.Errorf("%s: 缺少 %s", c.name, c.want)
+		}
 	}
 }

@@ -414,10 +414,15 @@ func TestBuildCatalogueExposesBothRealms(t *testing.T) {
 	for _, m := range buildCatalogue() {
 		ids[m.ID] = true
 	}
-	for _, want := range []string{"doubao/default", "doubao/image", "dola/default", "dola/image", "default"} {
+	for _, want := range []string{"doubao/default", "doubao/image", "dola/default", "dola/image"} {
 		if !ids[want] {
 			t.Errorf("catalogue missing %q", want)
 		}
+	}
+	// 裸名不再出现在列表里：它在请求时仍然可用（按默认上游解析），
+	// 但列出来会让每个模型出现三次。
+	if ids["default"] || ids["image"] {
+		t.Error("bare alias should not be advertised")
 	}
 }
 

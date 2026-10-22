@@ -305,12 +305,14 @@ func modelStatic(request []byte) ([]byte, error) {
 
 // modelForAuth answers model.for_auth: the catalogue for one credential.
 //
-// CPA calls this once per credential and merges the results across credentials
-// of the same provider. Because one plugin serves two realms under a single
-// provider key, the per-auth view returns *both* realms' models: returning only
-// the credential's own realm would leave the other realm's models absent from
-// /v1/models whenever no account of that realm is authorised, and returning both
-// is harmless — they resolve through the same executor.
+// 只返回该账号所属上游的模型，而且只返回带前缀的形式。
+//
+// CPA 会为每个账号调用一次并把结果并进 registry，所以这里返回什么，账号
+// 名下就有什么。之前每个账号都返回「两个上游 + 裸名」的完整清单，结果是同
+// 一批模型被注册了三遍：doubao/x、dola/x、x，列表里全是重复项；没登录 Dola
+// 也会看到 dola/* 的模型，选中后必然失败。
+//
+// realm 优先从凭据里读，读不到才退回默认上游。
 func modelForAuth(request []byte) ([]byte, error) {
 	var req pluginapi.AuthModelRequest
 	if len(request) > 0 {
@@ -320,8 +322,37 @@ func modelForAuth(request []byte) ([]byte, error) {
 	// reload, so it also repairs the cached value if the directory moved.
 	rememberAuthDir(req.Host.AuthDir)
 
-	models := buildCatalogue()
-	return okEnvelope(map[string]any{"models": models})
+	r := normalizeRealm(firstNonEmpty(
+		req.Attributes["realm"],
+		req.Attributes["provider"],
+		realmFromStorageBlob(req.StorageJSON),
+	))
+	if r == "" {
+		r = state.settings.get().RealmDefault
+	}
+	if r == "" {
+		r = realmDoubao
+	}
+
+	return okEnvelope(map[string]any{"models": catalogueFor(r)})
+}
+
+// realmFromStorageBlob reads the realm out of a credential's storage JSON.
+func realmFromStorageBlob(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var probe struct {
+		Realm string `json:"realm"`
+		Type  string `json:"type"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &probe); errUnmarshal != nil {
+		return ""
+	}
+	if probe.Realm != "" {
+		return probe.Realm
+	}
+	return probe.Type
 }
 
 // buildCatalogue assembles the advertised models.
@@ -335,18 +366,11 @@ func buildCatalogue() []catalogModel {
 	for _, r := range realms {
 		out = append(out, catalogueFor(r)...)
 	}
-	// The bare aliases are advertised too, resolving to the default realm, so a
-	// client that does not know about realms can just ask for "default".
-	for _, alias := range capabilityAliases {
-		out = append(out, catalogModel{
-			ID:          alias.ID,
-			Object:      "model",
-			Created:     referenceCreated,
-			OwnedBy:     string(settings.RealmDefault),
-			Type:        registryTypeFor(alias.Kind),
-			Description: fmt.Sprintf("%s（默认上游：%s）", alias.Description, profileFor(settings.RealmDefault).DisplayName),
-		})
-	}
+	// 不再额外列出裸名（default / image / …）。
+	//
+	// 裸名仍然可用——请求时由 resolveUpstreamModel 按默认上游解析——但不再
+	// 出现在模型列表里。否则同一个模型会有三个 ID（doubao/x、dola/x、x），
+	// 客户端下拉框里就变成一长串重复项。
 	return out
 }
 

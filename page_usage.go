@@ -347,7 +347,7 @@ func renderGuideView() string {
 	b.WriteString(renderEndpointTable())
 
 	b.WriteString(`<div class="group-head"><h2>模型与请求示例</h2>` +
-		`<span class="desc">模型名可加 <code>doubao/</code> 或 <code>dola/</code> 前缀指定上游</span></div>`)
+		`<span class="desc">每个账号只列出自己所在上游的模型；下面以上游前缀为 <code>doubao/</code> 为例</span></div>`)
 	for _, item := range guideCapabilities {
 		b.WriteString(renderGuideCard(item))
 	}
