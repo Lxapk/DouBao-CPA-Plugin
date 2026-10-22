@@ -373,7 +373,11 @@ func panelScript() string {
       // 账号页只有这一个添加入口。登录页里有国际版 / 国内版的切换，
       // 这里只负责给一个合理的初值：上次选过就用上次的，否则用默认上游。
       var realm = storageGet(AUTH_REALM_KEY) || stateDefaultRealm || "doubao";
-      window.open(LOGIN_PATH + "?realm=" + encodeURIComponent(realm), "_blank");
+      // 把当前配色带给登录页：新标签页读不到父窗口的 data-theme。
+      var theme = document.documentElement.getAttribute("data-theme") || "";
+      var url = LOGIN_PATH + "?realm=" + encodeURIComponent(realm);
+      if (theme) url += "&theme=" + encodeURIComponent(theme);
+      window.open(url, "_blank");
     },
 
     setRealm: function (value) {

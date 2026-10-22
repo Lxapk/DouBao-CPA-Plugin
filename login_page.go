@@ -66,7 +66,7 @@ func renderLoginPage(state string) string {
 	b.WriteString(`<div class="note" style="margin-bottom:6px">手机号</div>`)
 	b.WriteString(`<div class="row">`)
 	b.WriteString(`<input type="tel" id="phone" placeholder="例如 13800138000" autocomplete="tel" style="flex:1 1 220px">`)
-	b.WriteString(`<span class="btn-end"><button type="button" id="sendBtn" data-call="sendCode">获取验证码</button></span>`)
+	b.WriteString(`<span class="btn-end"><button type="button" class="secondary" id="sendBtn" data-call="sendCode">获取验证码</button></span>`)
 	b.WriteString(`</div>`)
 
 	b.WriteString(`<div class="note" style="margin:14px 0 6px">验证码</div>`)
@@ -113,6 +113,33 @@ func loginPageScript(state string) string {
   "use strict";
   var STATE = ` + string(stateJSON) + `;
   var SITE_MAP = ` + siteMapJSON() + `;
+
+  /* ---------- theme ---------- */
+
+  // 跟随宿主配色。
+  //
+  // 登录页是被 window.open 打开的新标签页，没有父窗口可读，只能靠 URL 上的
+  // theme 参数；独立打开时两者都没有，就移除属性让 media query 决定，
+  // 也就是「跟随系统」。不复制这段的话，无论宿主选哪套配色，登录页都停在
+  // 默认的暗色上。
+  function adoptHostTheme() {
+    var theme = "";
+    try {
+      if (window.parent && window.parent !== window && window.parent.document) {
+        theme = window.parent.document.documentElement.getAttribute("data-theme") || "";
+      }
+    } catch (e) {
+      theme = "";
+    }
+    if (!theme) {
+      try { theme = new URLSearchParams(location.search).get("theme") || ""; } catch (e) { theme = ""; }
+    }
+    var root = document.documentElement;
+    if (theme) root.setAttribute("data-theme", theme);
+    else root.removeAttribute("data-theme");
+  }
+
+  adoptHostTheme();
 
   // Submissions go to the management routes, not the resource route the page
   // itself was served from: CPA's resource handler only accepts GET (anything
@@ -163,7 +190,19 @@ func loginPageScript(state string) string {
         var data = null;
         try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
         if (!resp.ok) {
-          throw new Error((data && (data.error || data.message)) || ("HTTP " + resp.status));
+          // 把能拿到的信息都带上：只显示一句 "error" 时，用户和排查者都
+          // 无从判断是上游拒绝、参数不对，还是网关拦了。
+          var msg = (data && (data.error || data.message)) || "";
+          msg = String(msg).trim();
+          if (!msg || msg === "error") {
+            msg = "请求失败（HTTP " + resp.status + "）";
+            var snippet = String(text || "").trim();
+            if (snippet) msg += "：" + snippet.slice(0, 200);
+          }
+          var err = new Error(msg);
+          err.status = resp.status;
+          err.body = text;
+          throw err;
         }
         return data;
       });

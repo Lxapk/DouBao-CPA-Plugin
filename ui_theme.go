@@ -339,6 +339,12 @@ button.primary, .btn.primary {
 button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 button.danger { color: var(--error-color); border-color: color-mix(in srgb, var(--error-color) 40%, transparent); }
 button.danger:hover { background: color-mix(in srgb, var(--error-color) 12%, transparent); border-color: var(--error-color); }
+/* 次要按钮用次级底色：默认的 bg-primary 在牛皮纸 / 白色主题下几乎等于卡片
+   底色，贴着输入框时看起来像「没有按钮」，只有一圈浅边。 */
+button.secondary, .btn.secondary {
+  background: var(--bg-tertiary); border-color: var(--border-primary);
+}
+button.secondary:hover { background: var(--bg-hover); }
 button.ghost { background: transparent; border-color: transparent; }
 button.ghost:hover { background: var(--bg-tertiary); border-color: transparent; }
 button.xs { padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
@@ -348,8 +354,12 @@ button.xs { padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
 header > button + button,
 .btn-row > button + button { margin-left: 2px; }
 
-input[type="text"], input[type="password"], input[type="email"],
-input[type="number"], input[type="search"], select {
+/* 覆盖所有输入型控件，而不是逐个列 type。
+   漏一个 type 就会退到浏览器默认样式：白底黑框，在深色主题下读不清 ——
+   登录页的手机号输入框是 type="tel"，就是这样漏掉的。 */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="range"]),
+select,
+textarea {
   font: 400 13px/1.4 var(--sans);
   color: var(--text-primary); background: var(--bg-quinary);
   border: 1px solid var(--border-primary); border-radius: var(--radius-md);

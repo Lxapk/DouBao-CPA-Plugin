@@ -39,6 +39,9 @@ const (
 	passportSendCodePath = "/passport/web/send_code/"
 	// 校验走 sms_login：validate_code 是 App 侧的接口，网页端用的是这个。
 	passportLoginPath = "/passport/web/sms_login/"
+	// Dola 用 sms_login_only：抓包里它的响应已经带回完整账号信息
+	// （user_id / name / mobile），与豆包的 sms_login 是两条不同的实现。
+	passportLoginOnlyPath = "/passport/web/sms_login_only/"
 	// smsLoginType 是 send_code 的 type 参数，24 对应「短信验证码登录」。
 	smsLoginType = "24"
 )
@@ -63,6 +66,26 @@ func (e *phoneLoginError) Error() string {
 // language 决定短信与页面的语言。两者都按上游取，写死会让另一侧登录不了。
 func passportQuery(profile realmProfile) string {
 	q := url.Values{}
+	// 两套参数体系，取自各自网页端的真实请求：
+	//
+	//   豆包  passport_jssdk_version=4.1.5-beta.0 & passport_jssdk_type=normal
+	//         & is_from_ttaccountsdk=1
+	//   Dola  passport_jssdk_version=2.0.1-verify-center.1
+	//         & device_platform=web & os_type=4 & terminal_type=2
+	//         & account_sdk_source=web
+	//
+	// 版本号不是随便写的：Dola 的短信接口只认 verify-center 这条线，
+	// 带上豆包的 4.1.5 会被当成另一套 SDK 的调用。
+	if profile.PassportSDKStyle == passportSDKVerifyCenter {
+		q.Set("device_platform", "web")
+		q.Set("os_type", "4")
+		q.Set("terminal_type", "2")
+		q.Set("aid", profile.PassportAID)
+		q.Set("account_sdk_source", "web")
+		q.Set("passport_jssdk_version", "2.0.1-verify-center.1")
+		q.Set("language", profile.Locale)
+		return "?" + q.Encode()
+	}
 	q.Set("passport_jssdk_version", "4.1.5-beta.0")
 	q.Set("passport_jssdk_type", "normal")
 	q.Set("is_from_ttaccountsdk", "1")
@@ -139,7 +162,23 @@ func passportError(payload []byte) *phoneLoginError {
 			ErrorCode   int    `json:"error_code"`
 		} `json:"data"`
 	}
-	_ = json.Unmarshal(payload, &out)
+	if errUnmarshal := json.Unmarshal(payload, &out); errUnmarshal != nil {
+		// 不是 JSON：网关拦截、页面 HTML、空 body 都会走到这里。
+		// 早期实现静默当成「error_code 为 0 即成功」，于是一个 HTML 错误页
+		// 会被判成成功，直到后面检查 HTTP 状态才报出「HTTP 502」这种
+		// 与真实原因无关的信息。把原始片段带出来，排查才有依据。
+		snippet := strings.TrimSpace(string(payload))
+		if len(snippet) > 200 {
+			snippet = snippet[:200] + "…"
+		}
+		if snippet == "" {
+			snippet = "（空响应）"
+		}
+		return &phoneLoginError{
+			Message: "上游返回了无法解析的内容",
+			Hint:    "原始片段：" + snippet,
+		}
+	}
 
 	// 成败只看 error_code。
 	//
@@ -180,6 +219,10 @@ func passportError(payload []byte) *phoneLoginError {
 		err.Hint = "发送太频繁，等一分钟再试"
 	case 16:
 		err.Hint = "该应用无权限：这是 App 侧接口，网页端登录要用 /passport/web/ 那一套"
+	case 1108:
+		// Dola 走到了风控验证。响应里带 verify_center_decision_conf，
+		// 说明参数已被正确解析，只是需要额外的人机校验，插件无法代答。
+		err.Hint = "上游要求人机风控验证：这个号码/网络需要先在浏览器里完成一次登录，插件无法代答"
 	}
 
 	if err.Hint == "" {
@@ -213,8 +256,14 @@ func sendLoginCode(ctx context.Context, r realm, phone string) error {
 	query := passportQuery(profile)
 	resp, payload, errDo := passportRequest(ctx, profile.PassportHost, passportSendCodePath+query, form)
 	if errDo != nil {
+		logError("doubao: 发码请求失败 host=" + profile.PassportHost + " err=" + errDo.Error())
 		return errDo
 	}
+	// 记录原始响应：上游的拒绝理由各色各样，只把翻译后的一句丢给用户
+	// 会让「为什么失败」无从查起。日志里含手机号，所以先脱敏。
+	logInfo(fmt.Sprintf("doubao: 发码 %s aid=%s phone=%s -> HTTP %d %s",
+		profile.PassportHost, profile.PassportAID, maskPhone(phone), resp.StatusCode,
+		truncate(string(payload), 300)))
 	if err := passportError(payload); err != nil {
 		return err
 	}
@@ -239,11 +288,19 @@ func loginWithCode(ctx context.Context, r realm, phone string, code string) (str
 	form.Set("login_only", "false")
 	form.Set("ignore_lark_account", "true")
 
+	loginPath := passportLoginPath
+	if profile.PassportSDKStyle == passportSDKVerifyCenter {
+		loginPath = passportLoginOnlyPath
+	}
 	query := passportQuery(profile)
-	resp, payload, errDo := passportRequest(ctx, profile.PassportHost, passportLoginPath+query, form)
+	resp, payload, errDo := passportRequest(ctx, profile.PassportHost, loginPath+query, form)
 	if errDo != nil {
+		logError("doubao: 登录请求失败 host=" + profile.PassportHost + " err=" + errDo.Error())
 		return "", errDo
 	}
+	logInfo(fmt.Sprintf("doubao: 登录 %s aid=%s phone=%s -> HTTP %d %s",
+		profile.PassportHost, profile.PassportAID, maskPhone(phone), resp.StatusCode,
+		truncate(string(payload), 300)))
 	if err := passportError(payload); err != nil {
 		return "", err
 	}

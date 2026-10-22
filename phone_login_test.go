@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -477,11 +478,25 @@ func TestDolaPassportProfile(t *testing.T) {
 		t.Errorf("Dola PassportAID = %q，用错会得到 error_code 16", profile.PassportAID)
 	}
 
+	// 参数取自 Dola 网页端的真实请求（抓包），与豆包是两套体系。
 	query := passportQuery(profile)
-	for _, want := range []string{"aid=495671", "language=zh", "is_from_ttaccountsdk=1"} {
+	for _, want := range []string{
+		"aid=495671",
+		"language=zh",
+		"passport_jssdk_version=2.0.1-verify-center.1",
+		"account_sdk_source=web",
+		"device_platform=web",
+		"os_type=4",
+		"terminal_type=2",
+	} {
 		if !strings.Contains(query, want) {
 			t.Errorf("Dola query 缺少 %s: %s", want, query)
 		}
+	}
+	// 豆包那一套不能混进来
+	if strings.Contains(query, "is_from_ttaccountsdk") ||
+		strings.Contains(query, "passport_jssdk_type") {
+		t.Errorf("Dola query 混入了豆包参数: %s", query)
 	}
 	// 不能把豆包的 aid 带过去
 	if strings.Contains(query, "497858") {
@@ -561,5 +576,59 @@ func TestModelKeysMatchAppResources(t *testing.T) {
 		if alias.DolaKey != "" && !dolaKeys[alias.DolaKey] {
 			t.Errorf("%s 的 Dola 键 %q 在 APK 资源里不存在", alias.ID, alias.DolaKey)
 		}
+	}
+}
+
+// Dola 的登录路径与豆包不同。
+//
+// 抓包确认：Dola 走 /passport/web/sms_login_only/，其响应直接带回账号信息
+// （user_id / name / mobile）；豆包走 /passport/web/sms_login/。
+func TestDolaUsesLoginOnlyPath(t *testing.T) {
+	if passportLoginOnlyPath != "/passport/web/sms_login_only/" {
+		t.Errorf("Dola 登录路径 = %q", passportLoginOnlyPath)
+	}
+	if passportLoginPath != "/passport/web/sms_login/" {
+		t.Errorf("豆包登录路径 = %q", passportLoginPath)
+	}
+	if profileFor(realmDola).PassportSDKStyle != passportSDKVerifyCenter {
+		t.Error("Dola 应使用 verify-center 参数体系")
+	}
+	if profileFor(realmDoubao).PassportSDKStyle != passportSDKClassic {
+		t.Error("豆包应使用 classic 参数体系")
+	}
+}
+
+// 两套参数体系的版本号不能混用 —— 这是 Dola 发码一直返回 error_code 7 的原因。
+func TestPassportQueryVersionsDiffer(t *testing.T) {
+	dola := passportQuery(profileFor(realmDola))
+	doubao := passportQuery(profileFor(realmDoubao))
+
+	if !strings.Contains(dola, "2.0.1-verify-center.1") {
+		t.Errorf("Dola 应使用 verify-center 版本: %s", dola)
+	}
+	if strings.Contains(doubao, "verify-center") {
+		t.Errorf("豆包不应使用 verify-center 版本: %s", doubao)
+	}
+	// 豆包不带 verify-center 那套参数
+	if strings.Contains(doubao, "account_sdk_source") {
+		t.Errorf("豆包不应带 account_sdk_source: %s", doubao)
+	}
+}
+
+// qs 是参与签名的参数名列表，用同一套 xor5+hex 编码。
+// 从真实请求解出来是这 8 个字段，顺序即签名顺序。
+func TestQSParameterList(t *testing.T) {
+	const qs = "6466666a706b715a76616e5a766a7077666029646c61296160736c66605a75696471636a77682969646b6270646260296a765a717c75602975647676756a77715a6f7676616e5a736077766c6a6b29716077686c6b64695a717c7560297360776c637c4375"
+	raw, errDecode := hex.DecodeString(qs)
+	if errDecode != nil {
+		t.Fatalf("qs 不是合法 hex: %v", errDecode)
+	}
+	for i := range raw {
+		raw[i] ^= 5
+	}
+	got := string(raw)
+	want := "account_sdk_source,aid,device_platform,language,os_type,passport_jssdk_version,terminal_type,verifyFp"
+	if got != want {
+		t.Errorf("qs 解出 %q，期望 %q", got, want)
 	}
 }
